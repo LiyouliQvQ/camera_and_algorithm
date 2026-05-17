@@ -1,0 +1,74 @@
+# =========================
+# Python cache / virtual env
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# =========================
+# IDE / OS
+# =========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# =========================
+# Camera captures / test images
+# =========================
+camera/captures/
+camera/inspection_captures/
+camera/*.png
+camera/*.jpg
+camera/*.jpeg
+camera/*.bmp
+camera/*.tif
+camera/*.tiff
+
+# =========================
+# CV datasets / outputs
+# =========================
+CV_Project/datasets/
+CV_Project/results/
+CV_Project/output_results/
+CV_Project/bad_records/
+
+# =========================
+# Model weights / pretrained files
+# =========================
+CV_Project/pre_trained/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.bin
+
+# =========================
+# Large vendor SDK / optional
+# 如果 MvImport 是海康 SDK 文件，建议不上传；
+# 如果别人运行项目必须依赖它，可以改成上传说明而不是上传整个 SDK。
+# =========================
+camera/MvImport/
+CV_Project/MvImport/
+CV_Project/.git_backup_before_root_upload/
+
+# =========================
+# Logs / temp files
+# =========================
+*.log
+logs/
+tmp/
+temp/
+
+# =========================
+# Secrets
+# =========================
+.env
+*.key
+*.pem
+config_private.py

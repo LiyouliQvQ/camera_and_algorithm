@@ -1,0 +1,15 @@
+# 忽略海康威视的底层驱动文件夹
+MvImport/
+
+# 忽略 Python 运行产生的缓存文件
+__pycache__/
+*.pyc
+
+# ========= 新增：忽略深度学习的超大文件和数据集 =========
+datasets/
+pre_trained/
+results/
+bad_records/
+*.ckpt
+*.pth
+anomalib/
