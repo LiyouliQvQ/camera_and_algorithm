@@ -1023,6 +1023,37 @@ class DefectDetector:
 # [组件 5]: 自动检测流程控制面板
 # 逻辑：机械臂移动到点位 -> 相机软件触发拍照 -> 调用 DefectDetector.detect()
 # ==========================================
+class AlarmLightController:
+    """Mock alarm light and buzzer controller; does not touch real hardware."""
+    def __init__(self, logger=None):
+        self.logger = logger
+        self.state = "idle"
+
+    def _set_state(self, state):
+        self.state = state
+        message = f"三色灯/蜂鸣器预留状态: {state}"
+        if self.logger:
+            self.logger(message)
+        else:
+            print(message)
+        # TODO: 后续可在这里替换为机械臂 DO 输出、USB-Relay 或真实 IO 板卡控制。
+
+    def set_idle(self):
+        self._set_state("idle")
+
+    def set_running(self):
+        self._set_state("running")
+
+    def set_pass(self):
+        self._set_state("pass")
+
+    def set_fail(self):
+        self._set_state("fail")
+
+    def set_error(self):
+        self._set_state("error")
+
+
 class InspectionUIController:
     def __init__(self, root, parent_frame, camera_app, robot_app):
         self.root = root
@@ -1033,9 +1064,18 @@ class InspectionUIController:
 
         self.is_running = False
         self.stop_event = threading.Event()
-        self.results = []
+        self.pause_event = threading.Event()
+        self.all_detection_results = []
+        self.results = self.all_detection_results
         self.run_logs = []
         self.last_report_path = ""
+        self.auto_product_prefix = "PART_"
+        self.result_filter_var = tk.StringVar(value="ALL")
+        self.statistics_var = tk.StringVar(value="已检测: 0    OK: 0    NG: 0    ERROR: 0    良率: 0.00%")
+        self.final_status_var = tk.StringVar(value="WAIT")
+        self.preview_window = None
+        self.preview_photo = None
+        self.alarm_controller = AlarmLightController(logger=lambda msg: self.append_log(msg))
 
         self.save_dir = str((THIS_DIR / "inspection_captures").resolve())
         Path(self.save_dir).mkdir(parents=True, exist_ok=True)
@@ -1050,8 +1090,11 @@ class InspectionUIController:
         row1.pack(fill=tk.X, padx=8, pady=6)
 
         ttk.Label(row1, text="工件编号:").pack(side=tk.LEFT)
-        self.product_id_var = tk.StringVar(value=time.strftime("PART_%Y%m%d_%H%M%S"))
-        ttk.Entry(row1, textvariable=self.product_id_var, width=28).pack(side=tk.LEFT, padx=(4, 12))
+        self.product_id_var = tk.StringVar(value=self.generate_product_id())
+        self.product_id_entry = ttk.Entry(row1, textvariable=self.product_id_var, width=28)
+        self.product_id_entry.pack(side=tk.LEFT, padx=(4, 6))
+        self.product_id_entry.bind("<Return>", self.on_barcode_entered)
+        ttk.Label(row1, text="扫码枪预留: 键盘输入后回车").pack(side=tk.LEFT, padx=(0, 12))
 
         ttk.Label(row1, text="采图超时(s):").pack(side=tk.LEFT)
         self.capture_timeout_var = tk.DoubleVar(value=3.0)
@@ -1070,11 +1113,42 @@ class InspectionUIController:
         self.btn_stop = ttk.Button(row2, text="⏹️ 停止检测", command=self.stop_inspection, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(4, 0))
 
+        self.btn_pause = ttk.Button(row2, text="暂停检测", command=self.pause_inspection, state=tk.DISABLED)
+        self.btn_pause.pack(side=tk.LEFT, padx=(8, 4))
+
+        self.btn_resume = ttk.Button(row2, text="继续检测", command=self.resume_inspection, state=tk.DISABLED)
+        self.btn_resume.pack(side=tk.LEFT, padx=(4, 0))
+
         self.status_var = tk.StringVar(value="等待开始。请先在“机械臂示教中心”里配置当前序列。")
         ttk.Label(top, textvariable=self.status_var, foreground="#075").pack(anchor=tk.W, padx=8, pady=(2, 8))
 
+        summary_frame = ttk.Frame(self.parent)
+        summary_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+        ttk.Label(summary_frame, textvariable=self.statistics_var).pack(side=tk.LEFT)
+        self.final_status_label = tk.Label(
+            summary_frame,
+            textvariable=self.final_status_var,
+            font=("Arial", 28, "bold"),
+            fg="#666",
+            width=10
+        )
+        self.final_status_label.pack(side=tk.RIGHT, padx=8)
+
         result_group = ttk.LabelFrame(self.parent, text="检测结果")
         result_group.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+        filter_row = ttk.Frame(result_group)
+        filter_row.pack(fill=tk.X, padx=8, pady=(8, 0))
+        ttk.Label(filter_row, text="结果过滤:").pack(side=tk.LEFT)
+        self.result_filter_combo = ttk.Combobox(
+            filter_row,
+            textvariable=self.result_filter_var,
+            values=("ALL", "NG", "ERROR"),
+            width=12,
+            state="readonly"
+        )
+        self.result_filter_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self.result_filter_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_result_tree())
 
         columns = ("idx", "pose", "image", "result", "score", "threshold", "defect", "message")
         self.result_tree = ttk.Treeview(result_group, columns=columns, show="headings")
@@ -1098,6 +1172,7 @@ class InspectionUIController:
 
         scroll = ttk.Scrollbar(result_group, orient=tk.VERTICAL, command=self.result_tree.yview)
         self.result_tree.configure(yscrollcommand=scroll.set)
+        self.result_tree.bind("<<TreeviewSelect>>", self.on_result_tree_select)
         self.result_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0), pady=8)
         scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 8), pady=8)
 
@@ -1109,6 +1184,102 @@ class InspectionUIController:
 
     def set_status(self, msg):
         self.status_var.set(msg)
+
+    def generate_product_id(self):
+        """Generate a unique automatic product id for a new workpiece."""
+        now = time.time()
+        ms = int((now - int(now)) * 1000)
+        return f"{self.auto_product_prefix}{time.strftime('%Y%m%d_%H%M%S')}_{ms:03d}"
+
+    def prepare_product_id_for_run(self):
+        """Refresh auto ids for each run while preserving manual ids."""
+        current = self.product_id_var.get().strip()
+        if not current or current.startswith(self.auto_product_prefix):
+            current = self.generate_product_id()
+            self.product_id_var.set(current)
+        return current
+
+    def on_barcode_entered(self, _event=None):
+        """Handle keyboard-enter barcode simulation without real scanner IO."""
+        code = self.product_id_var.get().strip()
+        self.product_id_var.set(code)
+        self.append_log(f"扫码输入预留触发：{code or '<空>'}")
+        # TODO: 后续如需接入串口扫码枪，可在这里增加 pyserial 读取逻辑。
+        return "break"
+
+    def pause_inspection(self):
+        """Pause the workflow at safe checkpoints between hardware actions."""
+        if not self.is_running:
+            return
+        self.pause_event.set()
+        self.btn_pause.config(state=tk.DISABLED)
+        self.btn_resume.config(state=tk.NORMAL)
+        self.append_log("检测流程已暂停", level="WARN")
+        self.set_status("已暂停")
+
+    def resume_inspection(self):
+        """Resume a paused workflow without clearing current results."""
+        if not self.is_running:
+            return
+        self.pause_event.clear()
+        self.btn_pause.config(state=tk.NORMAL)
+        self.btn_resume.config(state=tk.DISABLED)
+        self.append_log("检测流程继续执行")
+        self.set_status("检测中")
+
+    def wait_if_paused(self):
+        """Block the worker thread while paused, but still allow stop."""
+        while self.pause_event.is_set() and not self.stop_event.is_set():
+            self.root.after(0, lambda: self.set_status("已暂停"))
+            time.sleep(0.1)
+        return not self.stop_event.is_set()
+
+    def calculate_statistics(self):
+        """Calculate current inspection counts and yield rate."""
+        total = len(self.all_detection_results)
+        labels = [str(item.get("label", item.get("result", ""))).upper() for item in self.all_detection_results]
+        ok_count = sum(1 for label in labels if label == "OK")
+        ng_count = sum(1 for label in labels if label == "NG")
+        error_count = sum(1 for label in labels if label == "ERROR")
+        yield_rate = (ok_count / total * 100.0) if total else 0.0
+        return {
+            "total": total,
+            "ok_count": ok_count,
+            "ng_count": ng_count,
+            "error_count": error_count,
+            "yield_rate": yield_rate,
+        }
+
+    def update_statistics(self):
+        """Update the statistics bar from all stored detection results."""
+        stats = self.calculate_statistics()
+        self.statistics_var.set(
+            f"已检测: {stats['total']}    OK: {stats['ok_count']}    "
+            f"NG: {stats['ng_count']}    ERROR: {stats['error_count']}    "
+            f"良率: {stats['yield_rate']:.2f}%"
+        )
+        return stats
+
+    def reset_final_status(self):
+        """Reset the large final status label for a new product."""
+        self.final_status_var.set("WAIT")
+        self.final_status_label.config(fg="#666")
+
+    def update_final_status(self, final_label):
+        """Show the final PASS, FAIL, or ERROR state prominently."""
+        label = str(final_label or "").upper()
+        if label == "OK":
+            self.final_status_var.set("PASS")
+            self.final_status_label.config(fg="#078a2f")
+            self.alarm_controller.set_pass()
+        elif label == "NG":
+            self.final_status_var.set("FAIL")
+            self.final_status_label.config(fg="#c00000")
+            self.alarm_controller.set_fail()
+        else:
+            self.final_status_var.set("ERROR")
+            self.final_status_label.config(fg="#e67e00")
+            self.alarm_controller.set_error()
 
     def append_log(self, message, level="INFO"):
         entry = {
@@ -1145,6 +1316,7 @@ class InspectionUIController:
         normalized = {
             "idx": idx,
             "pose": pose_name,
+            "pose_name": pose_name,
             "image": image_path or result.get("image_path", ""),
             "image_path": image_path or result.get("image_path", ""),
             "ok": bool(result.get("ok", label == "OK")) and label == "OK",
@@ -1174,6 +1346,7 @@ class InspectionUIController:
         report_dir.mkdir(parents=True, exist_ok=True)
         safe_product_id = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(product_id))
         report_path = report_dir / f"{safe_product_id}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+        stats = self.calculate_statistics()
 
         report = {
             "product_id": product_id,
@@ -1181,6 +1354,10 @@ class InspectionUIController:
             "end_time": end_time,
             "final_label": final_label,
             "final_ok": final_label == "OK",
+            "ok_count": stats["ok_count"],
+            "ng_count": stats["ng_count"],
+            "error_count": stats["error_count"],
+            "yield_rate": stats["yield_rate"],
             "algorithm_script": self.results[0].get("algorithm_script", "") if self.results else "",
             "results": self.results,
             "logs": self.run_logs
@@ -1206,11 +1383,13 @@ class InspectionUIController:
             self.save_dir_label.config(text=path)
 
     def clear_results(self):
-        self.results.clear()
+        self.all_detection_results.clear()
         self.run_logs.clear()
         self.last_report_path = ""
-        for item in self.result_tree.get_children():
-            self.result_tree.delete(item)
+        self.refresh_result_tree()
+        self.update_statistics()
+        self.reset_final_status()
+        self.alarm_controller.set_idle()
 
     def start_inspection(self):
         if self.is_running:
@@ -1228,24 +1407,31 @@ class InspectionUIController:
             messagebox.showwarning("提示", "请先在“机械臂示教中心”添加检测序列")
             return
 
+        self.prepare_product_id_for_run()
         self.clear_results()
         self.stop_event.clear()
+        self.pause_event.clear()
         self.robot_app.stop_requested = False
         self.is_running = True
 
         self.btn_start.config(state=tk.DISABLED)
         self.btn_stop.config(state=tk.NORMAL)
+        self.btn_pause.config(state=tk.NORMAL)
+        self.btn_resume.config(state=tk.DISABLED)
+        self.alarm_controller.set_running()
         self.set_status("检测流程执行中：机械臂移动 -> 拍照 -> 识别")
 
         threading.Thread(target=self._run_inspection_logic, daemon=True).start()
 
     def stop_inspection(self):
         self.stop_event.set()
+        self.pause_event.clear()
         self.robot_app.stop_requested = True
+        self.alarm_controller.set_idle()
         self.root.after(0, lambda: self.set_status("正在请求停止..."))
 
     def _run_inspection_logic(self):
-        product_id = self.product_id_var.get().strip() or time.strftime("PART_%Y%m%d_%H%M%S")
+        product_id = self.product_id_var.get().strip() or self.generate_product_id()
         timeout = float(self.capture_timeout_var.get() or 3.0)
         start_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1257,6 +1443,9 @@ class InspectionUIController:
             for idx, step in enumerate(list(self.robot_app.sequence_list), start=1):
                 if self.stop_event.is_set() or not self.robot_app.connected:
                     self.append_log("检测流程被停止或机械臂连接断开", level="WARN")
+                    break
+
+                if not self.wait_if_paused():
                     break
 
                 pose_name = step["name"]
@@ -1286,8 +1475,13 @@ class InspectionUIController:
 
                 # 2) 到位后稳定等待，复用原序列里的 delay 作为“拍照前停顿”
                 stable_start = time.time()
+                if not self.wait_if_paused():
+                    break
+
                 while time.time() - stable_start < delay:
                     if self.stop_event.is_set() or not self.robot_app.connected:
+                        break
+                    if not self.wait_if_paused():
                         break
                     time.sleep(0.05)
 
@@ -1306,6 +1500,9 @@ class InspectionUIController:
 
                 # 4) 调用识别算法
                 self.append_log(f"[{idx}] 点位 {pose_name} 拍照完成，开始识别")
+                if not self.wait_if_paused():
+                    break
+
                 result = self.detector.detect(
                     frame_rgb=frame_rgb,
                     frame_gray=frame_gray,
@@ -1341,6 +1538,10 @@ class InspectionUIController:
                     self.save_inspection_report(product_id, start_time, end_time, final_label)
                 except Exception as report_error:
                     self.append_log(f"保存检测报告失败: {report_error}", level="ERROR")
+            if self.results and not self.stop_event.is_set():
+                self.root.after(0, lambda label=final_label: self.update_final_status(label))
+            elif self.stop_event.is_set():
+                self.root.after(0, self.alarm_controller.set_idle)
             self.is_running = False
             self.robot_app.stop_requested = False
             self.root.after(0, self._reset_buttons)
@@ -1350,10 +1551,12 @@ class InspectionUIController:
             row = dict(idx)
             row.setdefault("result", row.get("label", ""))
             row.setdefault("defect", row.get("defect_type", ""))
+            row.setdefault("pose_name", row.get("pose", ""))
         else:
             row = {
                 "idx": idx,
                 "pose": pose_name,
+                "pose_name": pose_name,
                 "image": image_path,
                 "image_path": image_path,
                 "result": label,
@@ -1364,25 +1567,149 @@ class InspectionUIController:
                 "defect_type": defect_type,
                 "message": message
             }
-        self.results.append(row)
+        row.setdefault("boxes", [])
+        row.setdefault("heatmap_path", "")
+        self.all_detection_results.append(row)
+        self.root.after(0, lambda: (self.refresh_result_tree(), self.update_statistics()))
 
-        image_value = row.get("image_path") or row.get("image") or ""
-        filename = Path(image_value).name if image_value else ""
-        values = (
-            row.get("idx", ""),
-            row.get("pose", ""),
-            filename,
-            row.get("label", row.get("result", "")),
-            f"{float(row.get('score', 0.0)):.3f}",
-            f"{float(row.get('threshold', 0.5)):.3f}",
-            row.get("defect_type", row.get("defect", "")),
-            row.get("message", "")
-        )
-        self.root.after(0, lambda v=values: self.result_tree.insert("", tk.END, values=v))
+    def get_filtered_results(self):
+        """Return results matching the current table filter."""
+        mode = self.result_filter_var.get()
+        if mode == "NG":
+            return [r for r in self.all_detection_results if str(r.get("label", r.get("result", ""))).upper() == "NG"]
+        if mode == "ERROR":
+            return [r for r in self.all_detection_results if str(r.get("label", r.get("result", ""))).upper() == "ERROR"]
+        return list(self.all_detection_results)
+
+    def refresh_result_tree(self):
+        """Rebuild the result table without deleting stored detection results."""
+        for item in self.result_tree.get_children():
+            self.result_tree.delete(item)
+
+        for row in self.get_filtered_results():
+            image_value = row.get("image_path") or row.get("image") or ""
+            filename = Path(image_value).name if image_value else ""
+            values = (
+                row.get("idx", ""),
+                row.get("pose", row.get("pose_name", "")),
+                filename,
+                row.get("label", row.get("result", "")),
+                f"{float(row.get('score', 0.0)):.3f}",
+                f"{float(row.get('threshold', 0.5)):.3f}",
+                row.get("defect_type", row.get("defect", "")),
+                row.get("message", "")
+            )
+            iid = str(row.get("idx", len(self.result_tree.get_children()) + 1))
+            self.result_tree.insert("", tk.END, iid=iid, values=values)
+
+    def on_result_tree_select(self, _event=None):
+        """Open the selected detection image from the full stored result."""
+        selected = self.result_tree.selection()
+        if not selected:
+            return
+
+        try:
+            idx = int(selected[0])
+        except Exception:
+            return
+
+        for result in self.all_detection_results:
+            try:
+                if int(result.get("idx", -1)) == idx:
+                    self.show_detection_image(result)
+                    return
+            except Exception:
+                continue
+
+    def show_detection_image(self, result):
+        """Show one detection image in a separate preview window."""
+        image_path = result.get("image_path") or result.get("image") or ""
+        if not image_path or not Path(image_path).exists():
+            messagebox.showwarning("图片不存在", f"检测图片不存在:\n{image_path}")
+            return
+
+        image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if image is None:
+            messagebox.showwarning("图片读取失败", f"无法读取检测图片:\n{image_path}")
+            return
+
+        image = self.overlay_detection_result(image, result)
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(image_rgb)
+
+        max_w = max(400, min(1100, self.root.winfo_screenwidth() - 120))
+        max_h = max(300, min(800, self.root.winfo_screenheight() - 160))
+        pil_image.thumbnail((max_w, max_h), Image.LANCZOS)
+
+        if self.preview_window is None or not self.preview_window.winfo_exists():
+            self.preview_window = tk.Toplevel(self.root)
+            self.preview_window.title("检测图片大图")
+            self.preview_label = ttk.Label(self.preview_window)
+            self.preview_label.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        else:
+            self.preview_window.lift()
+
+        self.preview_photo = ImageTk.PhotoImage(pil_image)
+        self.preview_label.configure(image=self.preview_photo)
+
+    def overlay_detection_result(self, image, result):
+        """Overlay heatmap and detection boxes on a BGR image."""
+        output = image.copy()
+        heatmap_path = result.get("heatmap_path") or ""
+        if heatmap_path and Path(heatmap_path).exists():
+            heatmap = cv2.imread(str(heatmap_path), cv2.IMREAD_COLOR)
+            if heatmap is not None:
+                try:
+                    heatmap = cv2.resize(heatmap, (output.shape[1], output.shape[0]))
+                    output = cv2.addWeighted(output, 0.65, heatmap, 0.35, 0)
+                except Exception:
+                    pass
+
+        boxes = result.get("boxes") or []
+        for box in boxes:
+            parsed = self.parse_detection_box(box)
+            if parsed is None:
+                continue
+            x1, y1, x2, y2, box_label, box_score = parsed
+            cv2.rectangle(output, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            text_label = box_label or result.get("defect_type", "")
+            text_score = "" if box_score is None else f" {box_score:.2f}"
+            text = f"{text_label}{text_score}".strip()
+            if text:
+                y_text = max(18, y1 - 6)
+                cv2.putText(output, text, (x1, y_text), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        return output
+
+    def parse_detection_box(self, box):
+        """Parse supported box formats and skip invalid boxes safely."""
+        try:
+            if isinstance(box, dict):
+                x1 = int(float(box.get("x1")))
+                y1 = int(float(box.get("y1")))
+                x2 = int(float(box.get("x2")))
+                y2 = int(float(box.get("y2")))
+                label = str(box.get("label") or box.get("class") or "")
+                score = box.get("score")
+            elif isinstance(box, (list, tuple)) and len(box) >= 4:
+                x1, y1, x2, y2 = [int(float(v)) for v in box[:4]]
+                label = ""
+                score = None
+            else:
+                return None
+
+            if x2 <= x1 or y2 <= y1:
+                return None
+            score = None if score in (None, "") else float(score)
+            return x1, y1, x2, y2, label, score
+        except Exception:
+            return None
 
     def _reset_buttons(self):
         self.btn_start.config(state=tk.NORMAL)
         self.btn_stop.config(state=tk.DISABLED)
+        self.btn_pause.config(state=tk.DISABLED)
+        self.btn_resume.config(state=tk.DISABLED)
+        self.pause_event.clear()
 
     def save_results_csv(self):
         if not self.results:
