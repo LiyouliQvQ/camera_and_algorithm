@@ -58,6 +58,13 @@ camera_and_algorithm/
 - 修改 `camera/vision_robot_inspection_gui.py` 中的 `DefectDetector.detect()`，通过 `subprocess + JSON` 调用 dummy 算法脚本。
 - 完成最小闭环：
   `camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Project/scripts/infer_one_dummy.py -> 返回 JSON -> GUI 显示 OK/NG`
+- 增强自动检测流程：
+  - 统一点位检测结果结构。
+  - 增加运行日志。
+  - 整件产品按 `ERROR > NG > OK` 汇总最终结果。
+  - 每次检测后保存 JSON 报告到 `camera/inspection_reports/`。
+  - GUI 表格增加 `threshold` 字段。
+  - 增加“最近报告路径”按钮，方便现场确认报告落盘位置。
 
 ## 关键文件说明
 
@@ -127,6 +134,22 @@ camera/vision_robot_inspection_gui.py
 - `Path(image).stem.lower()` 包含 `ng`、`bad`、`defect` 时返回 NG。
 - 其他情况返回 OK。
 
+单独测试 OK 分支：
+
+```powershell
+python CV_Project\scripts\infer_one_dummy.py --image CV_Project\scripts\infer_one_dummy.py --pose P_OK --product-id PART_OK
+```
+
+单独测试 NG 分支：
+
+```powershell
+New-Item -ItemType File -Force -Path CV_Project\scripts\tmp_ng_probe.txt
+python CV_Project\scripts\infer_one_dummy.py --image CV_Project\scripts\tmp_ng_probe.txt --pose P_NG --product-id PART_NG
+Remove-Item -Force -Path CV_Project\scripts\tmp_ng_probe.txt
+```
+
+注意：dummy 脚本 stdout 必须只输出 JSON。任何日志、异常说明都应写到 stderr，否则 `DefectDetector.detect()` 的 JSON 解析会失败并返回 `label="ERROR"`。
+
 输出字段：
 
 ```json
@@ -152,6 +175,61 @@ GUI 侧失败兜底：
 - JSON 解析失败
 
 以上情况返回 `label="ERROR"`，GUI 不崩溃。
+
+## 自动检测报告
+
+`InspectionUIController` 现在会在完整检测结束后保存轻量 JSON 报告：
+
+```text
+camera/inspection_reports/
+```
+
+报告字段包括：
+
+- `product_id`
+- `start_time`
+- `end_time`
+- `final_label`
+- `final_ok`
+- `algorithm_script`
+- `results`
+- `logs`
+
+每个点位结果建议保持字段：
+
+- `idx`
+- `pose`
+- `image_path`
+- `label`
+- `score`
+- `threshold`
+- `defect_type`
+- `message`
+- `heatmap_path`
+- `algorithm_script`
+- `elapsed_ms`
+
+最终判定规则：
+
+- 任一点位 `ERROR`，整件产品 `ERROR`。
+- 否则任一点位 `NG`，整件产品 `NG`。
+- 全部点位 `OK`，整件产品 `OK`。
+
+GUI 测试流程：
+
+```powershell
+python camera\vision_robot_inspection_gui.py
+```
+
+现场测试检查点：
+
+- 相机可打开并预览。
+- 机械臂可连接。
+- 检测序列中至少有一个已保存点位。
+- 自动检测流程可以完成移动、拍照、识别。
+- 表格显示 `pose/image/label/score/threshold/defect/message`。
+- 检测结束后 `camera/inspection_reports/` 生成 JSON 报告。
+- “最近报告路径”按钮能显示最新报告路径。
 
 ## 已知约束
 
@@ -183,6 +261,15 @@ GUI 侧失败兜底：
 5. 增加多点位模型管理，例如按 pose_name 选择不同模型或阈值。
 6. 增加整件产品检测报告，汇总多点位 OK/NG、score、缺陷类型和图片路径。
 7. 现场联调机械臂节拍、相机曝光、稳定等待时间和算法耗时。
+
+PatchCore / EfficientAD 接入建议：
+
+1. 不要把 PyTorch/anomalib 直接 import 到 Tkinter GUI 主进程。
+2. 在 `CV_Project/scripts/infer_one.py` 内加载真实模型，保持 `--image --pose --product-id` 参数不变。
+3. stdout 只输出 JSON，stderr 输出日志。
+4. JSON 字段保持兼容 dummy 协议，新增字段也不要破坏 GUI 当前解析。
+5. `heatmap_path` 可指向轻量输出图，注意不要提交实际热力图文件。
+6. 先单独运行 `infer_one.py` 验证 OK/NG/ERROR，再让 GUI 从 dummy 切换到真实脚本。
 
 ## 推荐给 Codex 的后续提示词
 

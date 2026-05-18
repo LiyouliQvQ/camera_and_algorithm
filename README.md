@@ -16,6 +16,8 @@
 - 自动检测最小闭环：
   `camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Project/scripts/infer_one_dummy.py -> 返回 JSON -> GUI 显示 OK/NG`
 - dummy 算法脚本支持 OK/NG 分支验证。
+- 每次自动检测结束后生成轻量 JSON 报告，默认保存到 `camera/inspection_reports/`。
+- 自动检测流程已增加运行日志、结果标准化、整件最终判定和最近报告路径查看。
 
 ## 项目目录结构
 
@@ -83,6 +85,7 @@ camera_and_algorithm/
    `CV_Project/scripts/infer_one_dummy.py`
 6. dummy 算法脚本输出 JSON。
 7. GUI 解析 JSON 并显示 `OK`、`NG` 或 `ERROR`。
+8. GUI 汇总整件产品最终结果，并保存 JSON 检测报告。
 
 dummy 判定规则：
 
@@ -124,16 +127,26 @@ GUI 使用流程：
 3. 在机械臂示教中心配置点位和检测序列。
 4. 切换到自动检测流程。
 5. 点击开始检测，执行移动、拍照、识别和结果显示。
+6. 检查结果表格中的点位、图片、结果、score、threshold、缺陷类型和说明。
+7. 检测结束后点击“最近报告路径”，确认 JSON 报告保存位置。
 
 ## 如何单独测试 dummy 算法脚本
 
-在项目根目录执行：
+在项目根目录执行 OK 分支测试：
 
 ```powershell
 python CV_Project\scripts\infer_one_dummy.py --image CV_Project\scripts\infer_one_dummy.py --pose P1 --product-id PART001
 ```
 
-如果传入的图片路径存在，脚本会向 stdout 输出 JSON。错误信息输出到 stderr。
+NG 分支测试可以传入任意存在且文件名主体包含 `ng`、`bad` 或 `defect` 的文件，例如临时创建一个轻量文本文件，测试后删除：
+
+```powershell
+New-Item -ItemType File -Force -Path CV_Project\scripts\tmp_ng_probe.txt
+python CV_Project\scripts\infer_one_dummy.py --image CV_Project\scripts\tmp_ng_probe.txt --pose P_NG --product-id PART_NG
+Remove-Item -Force -Path CV_Project\scripts\tmp_ng_probe.txt
+```
+
+脚本 stdout 只输出 JSON。日志和错误信息应输出到 stderr，避免 GUI 解析 stdout 失败。
 
 ## JSON 输出协议
 
@@ -153,6 +166,59 @@ OK 示例：
   "product_id": ""
 }
 ```
+
+## 检测报告
+
+GUI 自动检测流程结束后会保存 JSON 报告，默认目录：
+
+```text
+camera/inspection_reports/
+```
+
+报告包含：
+
+- `product_id`
+- `start_time`
+- `end_time`
+- `final_label`
+- `final_ok`
+- `algorithm_script`
+- 每个点位的检测结果
+- 运行日志
+
+每个点位结果会尽量保留以下字段：
+
+- `idx`
+- `pose`
+- `image_path`
+- `label`
+- `score`
+- `threshold`
+- `defect_type`
+- `message`
+- `heatmap_path`
+- `algorithm_script`
+- `elapsed_ms`
+
+最终判定规则：
+
+- 任一点位 `ERROR`，整件产品 `ERROR`。
+- 否则任一点位 `NG`，整件产品 `NG`。
+- 全部点位 `OK`，整件产品 `OK`。
+
+## 如何接入 PatchCore / EfficientAD
+
+建议保持现有 `subprocess + JSON` 集成方式，不直接把 GUI 与深度学习环境强绑定。
+
+推荐步骤：
+
+1. 在 `CV_Project/scripts/` 下新增真实推理脚本，例如 `infer_one.py`。
+2. 保持与 `infer_one_dummy.py` 相同的命令行参数：`--image`、`--pose`、`--product-id`。
+3. 加载 PatchCore / EfficientAD 模型并对单张图片推理。
+4. stdout 只输出兼容 JSON，字段至少包含 `ok`、`label`、`score`、`threshold`、`defect_type`、`message`、`image_path`、`heatmap_path`、`pose`、`product_id`。
+5. 如果生成热力图，将路径写入 `heatmap_path`。
+6. GUI 侧优先只把算法脚本路径从 dummy 切换到真实 `infer_one.py`，不要改机械臂和相机底层。
+7. 先用单图脚本验证 OK/NG/ERROR，再接入 GUI 完整流程。
 
 NG 示例：
 
@@ -193,5 +259,5 @@ NG 示例：
 1. 接入 PatchCore / EfficientAD。
 2. 多点位模型管理。
 3. 热力图输出。
-4. 整件产品检测报告。
+4. 完善整件产品检测报告与结果追溯。
 5. 现场联调。

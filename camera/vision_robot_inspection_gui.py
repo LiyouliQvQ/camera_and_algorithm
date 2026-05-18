@@ -942,6 +942,9 @@ class DefectDetector:
         自动检测主入口。
         你后续只需要改这个函数内部的 TODO 区域即可。
         """
+        started_at = time.time()
+        script_path = ""
+
         def error_result(message):
             return {
                 "ok": False,
@@ -954,6 +957,8 @@ class DefectDetector:
                 "heatmap_path": "",
                 "pose": pose_name or "",
                 "product_id": product_id or "",
+                "algorithm_script": script_path,
+                "elapsed_ms": int((time.time() - started_at) * 1000),
                 "boxes": []
             }
 
@@ -962,6 +967,7 @@ class DefectDetector:
 
         project_root = Path(__file__).resolve().parents[1]
         infer_script = project_root / "CV_Project" / "scripts" / "infer_one_dummy.py"
+        script_path = str(infer_script)
         if not infer_script.exists():
             return error_result(f"算法脚本不存在：{infer_script}")
 
@@ -1007,6 +1013,8 @@ class DefectDetector:
         result.setdefault("heatmap_path", "")
         result.setdefault("pose", pose_name or "")
         result.setdefault("product_id", product_id or "")
+        result.setdefault("algorithm_script", script_path)
+        result.setdefault("elapsed_ms", int((time.time() - started_at) * 1000))
         result.setdefault("boxes", [])
         return result
 
@@ -1026,6 +1034,8 @@ class InspectionUIController:
         self.is_running = False
         self.stop_event = threading.Event()
         self.results = []
+        self.run_logs = []
+        self.last_report_path = ""
 
         self.save_dir = str((THIS_DIR / "inspection_captures").resolve())
         Path(self.save_dir).mkdir(parents=True, exist_ok=True)
@@ -1066,13 +1076,14 @@ class InspectionUIController:
         result_group = ttk.LabelFrame(self.parent, text="检测结果")
         result_group.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        columns = ("idx", "pose", "image", "result", "score", "defect", "message")
+        columns = ("idx", "pose", "image", "result", "score", "threshold", "defect", "message")
         self.result_tree = ttk.Treeview(result_group, columns=columns, show="headings")
         self.result_tree.heading("idx", text="序号")
         self.result_tree.heading("pose", text="点位")
         self.result_tree.heading("image", text="图片")
         self.result_tree.heading("result", text="结果")
         self.result_tree.heading("score", text="置信度")
+        self.result_tree.heading("threshold", text="阈值")
         self.result_tree.heading("defect", text="缺陷类型")
         self.result_tree.heading("message", text="说明")
 
@@ -1081,6 +1092,7 @@ class InspectionUIController:
         self.result_tree.column("image", width=260)
         self.result_tree.column("result", width=70, anchor="center")
         self.result_tree.column("score", width=80, anchor="center")
+        self.result_tree.column("threshold", width=80, anchor="center")
         self.result_tree.column("defect", width=120)
         self.result_tree.column("message", width=420)
 
@@ -1093,9 +1105,99 @@ class InspectionUIController:
         bottom.pack(fill=tk.X, padx=10, pady=(0, 10))
         ttk.Button(bottom, text="清空结果", command=self.clear_results).pack(side=tk.LEFT)
         ttk.Button(bottom, text="保存结果CSV", command=self.save_results_csv).pack(side=tk.LEFT, padx=8)
+        ttk.Button(bottom, text="最近报告路径", command=self.show_last_report_path).pack(side=tk.LEFT, padx=8)
 
     def set_status(self, msg):
         self.status_var.set(msg)
+
+    def append_log(self, message, level="INFO"):
+        entry = {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "level": level,
+            "message": str(message)
+        }
+        self.run_logs.append(entry)
+        self.root.after(0, lambda m=str(message): self.set_status(m))
+        return entry
+
+    def normalize_detection_result(self, result, idx, pose_name, image_path="", product_id=""):
+        if not isinstance(result, dict):
+            result = {
+                "ok": False,
+                "label": "ERROR",
+                "message": f"算法返回非JSON对象: {type(result).__name__}"
+            }
+
+        label = str(result.get("label") or ("OK" if result.get("ok", False) else "NG")).upper()
+        if label not in ("OK", "NG", "ERROR"):
+            label = "ERROR"
+
+        try:
+            score = float(result.get("score", 0.0))
+        except Exception:
+            score = 0.0
+
+        try:
+            threshold = float(result.get("threshold", 0.5))
+        except Exception:
+            threshold = 0.5
+
+        normalized = {
+            "idx": idx,
+            "pose": pose_name,
+            "image": image_path or result.get("image_path", ""),
+            "image_path": image_path or result.get("image_path", ""),
+            "ok": bool(result.get("ok", label == "OK")) and label == "OK",
+            "label": label,
+            "score": score,
+            "threshold": threshold,
+            "defect_type": result.get("defect_type", ""),
+            "message": result.get("message", ""),
+            "heatmap_path": result.get("heatmap_path", ""),
+            "product_id": product_id or result.get("product_id", ""),
+            "algorithm_script": result.get("algorithm_script", ""),
+            "elapsed_ms": int(result.get("elapsed_ms", 0) or 0),
+            "boxes": result.get("boxes", [])
+        }
+        return normalized
+
+    def compute_final_label(self, results):
+        labels = [str(item.get("label", "")).upper() for item in results]
+        if any(label == "ERROR" for label in labels):
+            return "ERROR"
+        if any(label == "NG" for label in labels):
+            return "NG"
+        return "OK"
+
+    def save_inspection_report(self, product_id, start_time, end_time, final_label):
+        report_dir = THIS_DIR / "inspection_reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        safe_product_id = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(product_id))
+        report_path = report_dir / f"{safe_product_id}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+
+        report = {
+            "product_id": product_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "final_label": final_label,
+            "final_ok": final_label == "OK",
+            "algorithm_script": self.results[0].get("algorithm_script", "") if self.results else "",
+            "results": self.results,
+            "logs": self.run_logs
+        }
+
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+
+        self.last_report_path = str(report_path)
+        self.append_log(f"检测报告已保存: {report_path.name}")
+        return str(report_path)
+
+    def show_last_report_path(self):
+        if not self.last_report_path:
+            messagebox.showinfo("最近报告路径", "当前还没有生成检测报告")
+            return
+        messagebox.showinfo("最近报告路径", self.last_report_path)
 
     def choose_save_dir(self):
         path = filedialog.askdirectory(initialdir=self.save_dir)
@@ -1105,6 +1207,8 @@ class InspectionUIController:
 
     def clear_results(self):
         self.results.clear()
+        self.run_logs.clear()
+        self.last_report_path = ""
         for item in self.result_tree.get_children():
             self.result_tree.delete(item)
 
@@ -1143,12 +1247,16 @@ class InspectionUIController:
     def _run_inspection_logic(self):
         product_id = self.product_id_var.get().strip() or time.strftime("PART_%Y%m%d_%H%M%S")
         timeout = float(self.capture_timeout_var.get() or 3.0)
+        start_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
-        final_ok = True
+        final_label = "ERROR"
+        had_runtime_error = False
 
         try:
+            self.append_log(f"开始检测: product_id={product_id}")
             for idx, step in enumerate(list(self.robot_app.sequence_list), start=1):
                 if self.stop_event.is_set() or not self.robot_app.connected:
+                    self.append_log("检测流程被停止或机械臂连接断开", level="WARN")
                     break
 
                 pose_name = step["name"]
@@ -1156,16 +1264,24 @@ class InspectionUIController:
                 delay = float(step.get("delay", 0))
 
                 if pose_name not in self.robot_app.saved_poses:
-                    self._append_result(idx, pose_name, "", "ERR", 0, "点位不存在", "该点位不在 saved_poses 中")
-                    final_ok = False
+                    result = self.normalize_detection_result(
+                        {"ok": False, "label": "ERROR", "defect_type": "pose_missing", "message": "该点位不在 saved_poses 中"},
+                        idx,
+                        pose_name,
+                        "",
+                        product_id
+                    )
+                    self._append_result(result)
+                    self.append_log(f"点位不存在: {pose_name}", level="ERROR")
                     continue
 
-                self.root.after(0, lambda p=pose_name: self.set_status(f"移动到点位：{p}"))
+                self.append_log(f"[{idx}] 移动到点位: {pose_name}")
 
                 # 1) 机械臂移动到指定点位；execute_movement 内部会等待 getRobotState == 0
                 self.robot_app.execute_movement(self.robot_app.saved_poses[pose_name], speed)
 
                 if self.stop_event.is_set() or not self.robot_app.connected:
+                    self.append_log(f"[{idx}] 点位 {pose_name} 移动后检测到停止请求或连接断开", level="WARN")
                     break
 
                 # 2) 到位后稳定等待，复用原序列里的 delay 作为“拍照前停顿”
@@ -1176,10 +1292,11 @@ class InspectionUIController:
                     time.sleep(0.05)
 
                 if self.stop_event.is_set() or not self.robot_app.connected:
+                    self.append_log(f"[{idx}] 点位 {pose_name} 稳定等待中停止", level="WARN")
                     break
 
                 # 3) 相机软件触发拍照并保存
-                self.root.after(0, lambda p=pose_name: self.set_status(f"点位 {p} 到位，开始拍照"))
+                self.append_log(f"[{idx}] 点位 {pose_name} 到位，开始拍照")
                 image_path, frame_rgb, frame_gray, ts = self.camera_app.capture_for_inspection(
                     pose_name=pose_name,
                     product_id=product_id,
@@ -1188,7 +1305,7 @@ class InspectionUIController:
                 )
 
                 # 4) 调用识别算法
-                self.root.after(0, lambda p=pose_name: self.set_status(f"点位 {p} 拍照完成，开始识别"))
+                self.append_log(f"[{idx}] 点位 {pose_name} 拍照完成，开始识别")
                 result = self.detector.detect(
                     frame_rgb=frame_rgb,
                     frame_gray=frame_gray,
@@ -1197,43 +1314,70 @@ class InspectionUIController:
                     product_id=product_id
                 )
 
-                label = result.get("label", "OK" if result.get("ok", True) else "NG")
-                score = float(result.get("score", 0.0))
-                defect_type = result.get("defect_type", "")
-                message = result.get("message", "")
+                normalized = self.normalize_detection_result(result, idx, pose_name, image_path, product_id)
+                self._append_result(normalized)
+                self.append_log(
+                    f"[{idx}] 点位 {pose_name} 识别完成: {normalized['label']} "
+                    f"score={normalized['score']:.3f} threshold={normalized['threshold']:.3f}"
+                )
 
-                if not result.get("ok", True):
-                    final_ok = False
-
-                self._append_result(idx, pose_name, image_path, label, score, defect_type, message)
-
-            end_msg = "检测完成：最终结果 OK" if final_ok else "检测完成：最终结果 NG"
+            final_label = self.compute_final_label(self.results)
+            end_msg = f"检测完成：最终结果 {final_label}"
             if self.stop_event.is_set():
                 end_msg = "检测已停止"
-            self.root.after(0, lambda m=end_msg: self.set_status(m))
+            self.append_log(end_msg)
 
         except Exception as e:
+            final_label = "ERROR"
+            had_runtime_error = True
+            self.append_log(f"自动检测异常: {e}", level="ERROR")
             self.root.after(0, lambda err=str(e): messagebox.showerror("自动检测异常", err))
             self.root.after(0, lambda err=str(e): self.set_status(f"异常：{err}"))
         finally:
+            end_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            if self.results:
+                final_label = "ERROR" if had_runtime_error else self.compute_final_label(self.results)
+                try:
+                    self.save_inspection_report(product_id, start_time, end_time, final_label)
+                except Exception as report_error:
+                    self.append_log(f"保存检测报告失败: {report_error}", level="ERROR")
             self.is_running = False
             self.robot_app.stop_requested = False
             self.root.after(0, self._reset_buttons)
 
-    def _append_result(self, idx, pose_name, image_path, label, score, defect_type, message):
-        row = {
-            "idx": idx,
-            "pose": pose_name,
-            "image": image_path,
-            "result": label,
-            "score": score,
-            "defect": defect_type,
-            "message": message
-        }
+    def _append_result(self, idx, pose_name=None, image_path="", label="", score=0.0, defect_type="", message="", threshold=0.5):
+        if isinstance(idx, dict):
+            row = dict(idx)
+            row.setdefault("result", row.get("label", ""))
+            row.setdefault("defect", row.get("defect_type", ""))
+        else:
+            row = {
+                "idx": idx,
+                "pose": pose_name,
+                "image": image_path,
+                "image_path": image_path,
+                "result": label,
+                "label": label,
+                "score": score,
+                "threshold": threshold,
+                "defect": defect_type,
+                "defect_type": defect_type,
+                "message": message
+            }
         self.results.append(row)
 
-        filename = Path(image_path).name if image_path else ""
-        values = (idx, pose_name, filename, label, f"{score:.3f}", defect_type, message)
+        image_value = row.get("image_path") or row.get("image") or ""
+        filename = Path(image_value).name if image_value else ""
+        values = (
+            row.get("idx", ""),
+            row.get("pose", ""),
+            filename,
+            row.get("label", row.get("result", "")),
+            f"{float(row.get('score', 0.0)):.3f}",
+            f"{float(row.get('threshold', 0.5)):.3f}",
+            row.get("defect_type", row.get("defect", "")),
+            row.get("message", "")
+        )
         self.root.after(0, lambda v=values: self.result_tree.insert("", tk.END, values=v))
 
     def _reset_buttons(self):
@@ -1257,7 +1401,11 @@ class InspectionUIController:
 
         import csv
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=["idx", "pose", "image", "result", "score", "defect", "message"])
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["idx", "pose", "image_path", "label", "score", "threshold", "defect_type", "message"],
+                extrasaction="ignore"
+            )
             writer.writeheader()
             writer.writerows(self.results)
 
