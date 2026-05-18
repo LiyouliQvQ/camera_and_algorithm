@@ -2,6 +2,53 @@
 
 本文档是给 Codex 后续继续开发时读取的上下文浓缩文件，不是普通用户文档。
 
+## 最新交接状态（2026-05-18）
+
+当前项目根目录：
+
+```text
+D:\run_code\camera_and_algorithm
+```
+
+当前 GitHub 仓库：
+
+```text
+https://github.com/LiyouliQvQ/camera_and_algorithm
+```
+
+当前 Git 状态：
+
+```text
+git status -sb
+## main...origin/main
+
+git status --short
+<无输出，工作区干净>
+```
+
+最近提交：
+
+```text
+7ba367f Improve inspection workflow reporting and documentation
+190abe4 Add project README and Codex handoff notes
+566c0be Initial commit: robot camera GUI and dummy inspection pipeline
+```
+
+根据本地 Git 状态，`main` 当前与 `origin/main` 对齐。最新已提交内容包括：
+
+- 初始项目代码、根 `.gitignore`、`camera/` 主 GUI 与 `CV_Project/` 普通代码目录。
+- `CV_Project/scripts/infer_one_dummy.py` dummy 单图推理脚本。
+- 根目录 `README.md` 和本交接文档。
+- GUI 自动检测流程增强：
+  - 统一点位检测结果结构。
+  - 增加 `threshold` 显示。
+  - 增加运行日志。
+  - 整件最终判定规则：`ERROR > NG > OK`。
+  - 每次完整检测后保存 JSON 报告到 `camera/inspection_reports/`。
+  - 增加“最近报告路径”按钮。
+
+本轮交接前的最后请求是：更新 `CODEX_HANDOFF.md` 作为新 Codex 对话完整交接文件。当前这次修改只更新本文档，尚未提交、尚未 push。
+
 ## 当前项目背景
 
 这是一个汽车差速器壳体工业视觉检测项目。目标是在 `camera/` 中通过 Tkinter GUI 控制艾利特 EC66 机械臂运动到指定点位，调用海康工业相机拍照，再调用 `CV_Project/` 中的视觉算法完成 OK/NG 检测。
@@ -65,6 +112,16 @@ camera_and_algorithm/
   - 每次检测后保存 JSON 报告到 `camera/inspection_reports/`。
   - GUI 表格增加 `threshold` 字段。
   - 增加“最近报告路径”按钮，方便现场确认报告落盘位置。
+
+## 尚未完成的任务
+
+- 尚未接入真实 PatchCore / EfficientAD 推理。
+- 尚未新增真实算法入口 `CV_Project/scripts/infer_one.py`。
+- 尚未在 GUI 中提供 dummy/真实算法脚本切换配置。
+- 尚未生成或显示热力图。
+- 尚未实现多点位模型和阈值管理。
+- 尚未做现场完整联调，包括机械臂节拍、相机曝光、稳定等待时间、算法耗时。
+- 尚未完善报告可视化，只是保存 JSON 报告和显示最近报告路径。
 
 ## 关键文件说明
 
@@ -252,6 +309,45 @@ python camera\vision_robot_inspection_gui.py
 - 不要删除本地数据集、图片、模型或 SDK 文件。
 - 默认保持最小闭环验证，不做大规模重构。
 
+## 不要读取/不要修改的目录
+
+除非用户明确要求，否则不要读取、扫描、分析或修改：
+
+```text
+camera/MvImport/
+camera/captures/
+camera/inspection_captures/
+camera/inspection_reports/       # 可说明报告格式，但不要提交实际报告
+CV_Project/MvImport/
+CV_Project/anomalib/
+CV_Project/datasets/
+CV_Project/pre_trained/
+CV_Project/results/
+CV_Project/output_results/
+CV_Project/bad_records/
+CV_Project/.git_backup_before_root_upload/
+__pycache__/
+.venv/
+venv/
+```
+
+也不要读取或提交：
+
+```text
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tif
+*.tiff
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+.env
+```
+
 ## 下一步建议任务
 
 1. 为真实算法新增 `CV_Project/scripts/infer_one.py`，保持与 dummy 脚本相同 JSON 协议。
@@ -270,6 +366,21 @@ PatchCore / EfficientAD 接入建议：
 4. JSON 字段保持兼容 dummy 协议，新增字段也不要破坏 GUI 当前解析。
 5. `heatmap_path` 可指向轻量输出图，注意不要提交实际热力图文件。
 6. 先单独运行 `infer_one.py` 验证 OK/NG/ERROR，再让 GUI 从 dummy 切换到真实脚本。
+
+## 推荐新对话启动提示词
+
+```text
+请继续 D:\run_code\camera_and_algorithm 项目开发。先阅读 CODEX_HANDOFF.md、README.md、AGENTS.md、PROJECT_OVERVIEW.md、camera/vision_robot_inspection_gui.py、CV_Project/scripts/infer_one_dummy.py。
+
+不要读取或修改 camera/MvImport/、camera/captures/、camera/inspection_captures/、camera/inspection_reports/、CV_Project/MvImport/、CV_Project/anomalib/、CV_Project/datasets/、CV_Project/pre_trained/、CV_Project/results/、CV_Project/output_results/、CV_Project/bad_records/、CV_Project/.git_backup_before_root_upload/，也不要读取图片、模型权重或 .env。
+
+当前项目已完成 dummy 自动检测闭环：
+camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Project/scripts/infer_one_dummy.py -> 返回 JSON -> GUI 显示 OK/NG/ERROR -> 保存 JSON 报告到 camera/inspection_reports/。
+
+请保持最小改动，不要重写 GUI，不要修改海康 SDK 底层，不要修改 RobotUIController.send_cmd() 或 RobotUIController.execute_movement()。
+
+下一步建议：设计并实现真实算法入口 CV_Project/scripts/infer_one.py，用 PatchCore / EfficientAD 做单图推理，但保持与 dummy 脚本相同的 JSON 输出协议。修改前先给出计划和文件清单。
+```
 
 ## 推荐给 Codex 的后续提示词
 
