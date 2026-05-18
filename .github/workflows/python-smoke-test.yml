@@ -1,0 +1,36 @@
+name: Python smoke test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install minimal requirements
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile GUI entry
+        run: python -m py_compile camera/vision_robot_inspection_gui.py
+
+      - name: Compile dummy inference script
+        run: python -m py_compile CV_Project/scripts/infer_one_dummy.py
+
+      - name: Run dummy smoke test
+        run: python scripts/smoke_test_dummy.py
