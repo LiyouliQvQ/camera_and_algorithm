@@ -64,6 +64,14 @@ git status --short
   - defect 测试目录：`D:\run_code\camera_and_algorithm\CV_Project\datasets\differential_housing\test\defect`
 - 已更新 `.gitignore`，新增根目录 `results/` 忽略规则。不要删除 `results/`，也不要提交该运行产物目录。
 
+当前算法策略调整：
+
+- `CV_Project/scripts/infer_one_patchcore.py` 明确定位为 PatchCore 单图推理实验版，用于验证真实模型推理链路和 JSON 协议，不作为当前正式上线检测算法。
+- 当前模型与数据量不足以稳定区分 good/defect，3 good + 3 defect 小样本已出现 score 分布重叠；现阶段暂时不继续调 threshold。
+- 暂时不把 PatchCore 实验版接入 GUI 作为正式检测算法，GUI 仍保持 dummy 闭环，避免现场误以为真实算法已稳定上线。
+- 后续等数据集收集和标注足够后，再重新训练 PatchCore / EfficientAD，并重新评估 score 分布、threshold、heatmap 与 boxes 输出。
+- 下一步工作重点从调模型转为数据采集与标注闭环：稳定采图、归档 OK/NG 样本、整理缺陷类别、形成可复训数据集。
+
 本轮测试命令与结果：
 
 ```powershell
@@ -107,21 +115,20 @@ camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Proj
 - 已新增 PatchCore 单图推理脚本第一版，但尚未接入 GUI。
 - 尚未新增真实算法入口 `CV_Project/scripts/infer_one.py`。
 - 尚未在 GUI 中提供 dummy/真实算法脚本切换配置。
-- 尚未完成完整 `test/good` 与 `test/defect` 的 score 分布统计。
-- 尚未确定最终 threshold；当前 0.5 可检出部分 defect，但会漏掉 `bad_01.png` 等低分缺陷样本。
+- 暂不继续完整 `test/good` 与 `test/defect` 的 score 分布调参；当前数据量不足，先转向采集更多真实样本。
+- 尚未确定最终 threshold；当前 0.5 可检出部分 defect，但会漏掉 `bad_01.png` 等低分缺陷样本，因此不作为正式检测阈值。
 - 普通 Python 环境中 `torch` 和 `anomalib` 尚不可导入；`cv_lab` 环境中已可导入并可运行 PatchCore 单图脚本。
 - 三色灯/蜂鸣器、扫码枪目前仅为 mock/stub 预留，不接真实硬件。
 
 下一步建议：
 
-进入真实算法接入前的准备阶段。下一步建议：
+进入数据采集与标注闭环阶段。下一步建议：
 
-1. 先批量跑完整 `test/good` 和 `test/defect`，统计 score 分布。
-2. 根据 good/defect 分布确定初始 `threshold`，或判断是否需要重新训练 / 尝试 EfficientAD。
-3. 分布稳定前不要接 GUI，不要删除 PatchCore，不要提交 `results/`。
-4. 若单图结果稳定，再小步修改 GUI 的 `DefectDetector`，支持从 dummy 切换到 `infer_one_patchcore.py`。
-5. 后续再实现 heatmap 保存和 boxes 提取。
-6. 继续保持 `subprocess + JSON`，不要把 PyTorch/anomalib 直接 import 到 Tkinter GUI 主进程。
+1. 先用现有 GUI/相机流程稳定采集更多 OK 与 NG 图片，按产品、点位、缺陷类型归档。
+2. 建立最小标注规范：OK、NG、缺陷类别、点位、采集时间、备注，保证后续可复训。
+3. 数据集充足后，重新训练 PatchCore / EfficientAD，再批量统计 good/defect score 分布。
+4. 分布稳定前不要把 `infer_one_patchcore.py` 接入 GUI 作为正式算法，不要删除 PatchCore 实验脚本，不要提交 `results/`。
+5. 后续算法稳定后，再实现 heatmap 保存、boxes 提取，并通过 `subprocess + JSON` 小步接入 GUI。
 
 推荐新 Codex 对话启动提示词：
 
