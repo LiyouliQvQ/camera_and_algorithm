@@ -2,7 +2,103 @@
 
 本文档是给 Codex 后续继续开发时读取的上下文浓缩文件，不是普通用户文档。
 
-## 最新交接状态（2026-05-18）
+## 最新交接状态（2026-05-19）
+
+当前项目根目录：
+
+```text
+D:\run_code\camera_and_algorithm
+```
+
+当前 GitHub 仓库：
+
+```text
+https://github.com/LiyouliQvQ/camera_and_algorithm
+```
+
+当前 Git 状态：
+
+```text
+git status -sb
+## main...origin/main
+
+git status --short
+<无输出，工作区干净>
+```
+
+最近完成并已 push：
+
+- `camera/vision_robot_inspection_gui.py` GUI 工业现场功能增强已提交并推送：
+  - 结果表格点击查看检测图片大图。
+  - 支持 `boxes` 缺陷框叠加显示。
+  - 支持 `heatmap_path` 热力图半透明叠加。
+  - 结果表格支持 `ALL / NG / ERROR` 过滤。
+  - 增加实时统计横条：已检测总数、OK、NG、ERROR、良率。
+  - 检测结束显示大字号 `PASS / FAIL / ERROR`。
+  - 增加暂停/继续流程控制。
+  - 增加扫码枪键盘输入预留入口。
+  - 增加三色灯/蜂鸣器 mock/stub 接口，不控制真实硬件。
+- `AGENTS.md` 已加入长期规则：每次完成明确开发任务后，检查并按需维护 `CODEX_HANDOFF.md`。
+- GitHub Actions 已通过。
+- 新增 `CV_Project/scripts/check_model_ready.py`：
+  - 用于在接入真实 PatchCore / EfficientAD 前检查模型文件和算法环境是否准备好。
+  - 接收 `--model` 参数。
+  - 检查模型文件是否存在。
+  - 检查模型后缀是否支持 `.ckpt/.pt/.pth/.onnx/.engine`。
+  - 检查 `torch` 是否可导入。
+  - 检查 `anomalib` 是否可导入。
+  - 输出清晰的 `OK / MISSING / UNSUPPORTED / NOT_READY` 状态。
+
+本轮测试命令与结果：
+
+```powershell
+python -m py_compile camera\vision_robot_inspection_gui.py
+python -m py_compile CV_Project\scripts\check_model_ready.py
+python CV_Project\scripts\check_model_ready.py
+python CV_Project\scripts\check_model_ready.py --model D:\not_exist_model.ckpt
+python CV_Project\scripts\check_model_ready.py --model D:\fake_model.txt
+```
+
+结果：
+
+- `camera/vision_robot_inspection_gui.py` 语法检查通过。
+- `CV_Project/scripts/check_model_ready.py` 语法检查通过。
+- 缺少 `--model` 时退出码 1，符合预期。
+- 模型不存在时输出 `NOT_READY`，符合预期。
+- 后缀不支持时输出 `UNSUPPORTED`，符合预期。
+- 当前环境 `torch_import` 和 `anomalib_import` 为 `MISSING`，需要后续配置真实算法环境。
+
+当前可运行流程：
+
+```text
+camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Project/scripts/infer_one_dummy.py -> 返回 JSON -> GUI 显示 OK/NG/ERROR -> 保存 JSON 报告
+```
+
+仍未完成：
+
+- 尚未接入真实 PatchCore / EfficientAD 推理。
+- 尚未新增真实算法入口 `CV_Project/scripts/infer_one.py`。
+- 尚未在 GUI 中提供 dummy/真实算法脚本切换配置。
+- 当前真实算法环境未就绪：`torch` 和 `anomalib` 尚不可导入。
+- 三色灯/蜂鸣器、扫码枪目前仅为 mock/stub 预留，不接真实硬件。
+
+下一步建议：
+
+进入真实算法接入前的准备阶段。下一步建议：
+
+1. 准备真实 PatchCore 或 EfficientAD checkpoint。
+2. 配置 `torch` / `anomalib` 环境。
+3. 使用 `CV_Project/scripts/check_model_ready.py` 检查真实模型路径。
+4. 检查通过后再新增 `CV_Project/scripts/infer_one_patchcore.py`。
+5. 继续保持 `subprocess + JSON`，不要把 PyTorch/anomalib 直接 import 到 Tkinter GUI 主进程。
+
+推荐新 Codex 对话启动提示词：
+
+```text
+请继续 D:\run_code\camera_and_algorithm 项目。先读取 AGENTS.md、CODEX_HANDOFF.md、README.md、camera/vision_robot_inspection_gui.py、CV_Project/scripts/infer_one_dummy.py。不要读取或修改 MvImport、datasets、pre_trained、captures、inspection_captures、results、output_results、bad_records、图片或模型权重。当前 GUI 已完成结果大图查看、boxes/heatmap 叠加、表格过滤、良率统计、PASS/FAIL/ERROR、暂停/继续、扫码枪预留和三色灯/蜂鸣器 stub。下一步进入真实算法接入前分析阶段，先给方案和文件清单，不要直接大改代码。
+```
+
+## 历史交接状态（2026-05-18）
 
 当前项目根目录：
 
