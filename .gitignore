@@ -36,6 +36,7 @@ CV_Project/datasets/
 CV_Project/results/
 CV_Project/output_results/
 CV_Project/bad_records/
+results/
 
 # =========================
 # Model weights / pretrained files

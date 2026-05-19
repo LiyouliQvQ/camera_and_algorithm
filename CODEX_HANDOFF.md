@@ -48,6 +48,21 @@ git status --short
   - 检查 `torch` 是否可导入。
   - 检查 `anomalib` 是否可导入。
   - 输出清晰的 `OK / MISSING / UNSUPPORTED / NOT_READY` 状态。
+- 新增 `CV_Project/scripts/infer_one_patchcore.py` 第一版：
+  - 通过 `cv_lab` 环境加载 PatchCore ckpt 做单张图片推理。
+  - 参数兼容 dummy：`--image --pose --product-id`，并新增 `--model --threshold --device`。
+  - stdout 输出 GUI 兼容 JSON。
+  - stderr 输出模型加载、推理日志和错误信息。
+  - 第一版只返回 `score`、`OK/NG/ERROR`、`threshold`、`image_path` 等基础字段。
+  - 第一版暂不保存 heatmap，`heatmap_path` 返回空字符串。
+  - 第一版暂不提取 boxes，`boxes` 返回空数组。
+  - 已修正 score 提取逻辑：除 `pred_score` 外，也会使用 `anomaly_map.max` 作为候选分数，并取最大候选值。
+- 当前 PatchCore 模型与测试路径：
+  - conda 环境：`cv_lab`
+  - 模型路径：`D:\run_code\camera_and_algorithm\CV_Project\results\Patchcore\differential_housing\v5\weights\lightning\model.ckpt`
+  - good 测试目录：`D:\run_code\camera_and_algorithm\CV_Project\datasets\differential_housing\test\good`
+  - defect 测试目录：`D:\run_code\camera_and_algorithm\CV_Project\datasets\differential_housing\test\defect`
+- 已更新 `.gitignore`，新增根目录 `results/` 忽略规则。不要删除 `results/`，也不要提交该运行产物目录。
 
 本轮测试命令与结果：
 
@@ -57,6 +72,8 @@ python -m py_compile CV_Project\scripts\check_model_ready.py
 python CV_Project\scripts\check_model_ready.py
 python CV_Project\scripts\check_model_ready.py --model D:\not_exist_model.ckpt
 python CV_Project\scripts\check_model_ready.py --model D:\fake_model.txt
+python -m py_compile CV_Project\scripts\infer_one_patchcore.py
+conda run --no-capture-output -n cv_lab python CV_Project\scripts\infer_one_patchcore.py --image "D:\run_code\CV_Project\datasets\differential_housing\test\defect\bad_01.png" --model "D:\run_code\camera_and_algorithm\CV_Project\results\Patchcore\differential_housing\v5\weights\lightning\model.ckpt" --threshold 0.5 --pose P1 --product-id TEST001
 ```
 
 结果：
@@ -67,6 +84,17 @@ python CV_Project\scripts\check_model_ready.py --model D:\fake_model.txt
 - 模型不存在时输出 `NOT_READY`，符合预期。
 - 后缀不支持时输出 `UNSUPPORTED`，符合预期。
 - 当前环境 `torch_import` 和 `anomalib_import` 为 `MISSING`，需要后续配置真实算法环境。
+- `CV_Project/scripts/infer_one_patchcore.py` 语法检查通过。
+- 使用 `cv_lab`、`model.ckpt` 和指定测试图完成单图推理，输出合法 JSON。
+- `bad_01.png` 诊断结果：`pred_score=0`，但 `anomaly_map.max=0.20731699466705322`，因此已将 `anomaly_map.max` 纳入 score 候选。
+- 3 张 good + 3 张 defect 测试结果：
+  - `goodtest_01.png`: `score=0.180768`, `label=OK`
+  - `goodtest_02.png`: `score=0.196435`, `label=OK`
+  - `goodtest_03.png`: `score=0.234565`, `label=OK`
+  - `bad_01.png`: `score=0.207317`, `label=OK`
+  - `bad_02.png`: `score=0.507737`, `label=NG`
+  - `bad_03.png`: `score=0.535620`, `label=NG`
+- 结论：`infer_one_patchcore.py` 初步可运行，但 good/defect 分布有重叠，暂时不要接 GUI。
 
 当前可运行流程：
 
@@ -76,26 +104,29 @@ camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Proj
 
 仍未完成：
 
-- 尚未接入真实 PatchCore / EfficientAD 推理。
+- 已新增 PatchCore 单图推理脚本第一版，但尚未接入 GUI。
 - 尚未新增真实算法入口 `CV_Project/scripts/infer_one.py`。
 - 尚未在 GUI 中提供 dummy/真实算法脚本切换配置。
-- 当前真实算法环境未就绪：`torch` 和 `anomalib` 尚不可导入。
+- 尚未完成完整 `test/good` 与 `test/defect` 的 score 分布统计。
+- 尚未确定最终 threshold；当前 0.5 可检出部分 defect，但会漏掉 `bad_01.png` 等低分缺陷样本。
+- 普通 Python 环境中 `torch` 和 `anomalib` 尚不可导入；`cv_lab` 环境中已可导入并可运行 PatchCore 单图脚本。
 - 三色灯/蜂鸣器、扫码枪目前仅为 mock/stub 预留，不接真实硬件。
 
 下一步建议：
 
 进入真实算法接入前的准备阶段。下一步建议：
 
-1. 准备真实 PatchCore 或 EfficientAD checkpoint。
-2. 配置 `torch` / `anomalib` 环境。
-3. 使用 `CV_Project/scripts/check_model_ready.py` 检查真实模型路径。
-4. 检查通过后再新增 `CV_Project/scripts/infer_one_patchcore.py`。
-5. 继续保持 `subprocess + JSON`，不要把 PyTorch/anomalib 直接 import 到 Tkinter GUI 主进程。
+1. 先批量跑完整 `test/good` 和 `test/defect`，统计 score 分布。
+2. 根据 good/defect 分布确定初始 `threshold`，或判断是否需要重新训练 / 尝试 EfficientAD。
+3. 分布稳定前不要接 GUI，不要删除 PatchCore，不要提交 `results/`。
+4. 若单图结果稳定，再小步修改 GUI 的 `DefectDetector`，支持从 dummy 切换到 `infer_one_patchcore.py`。
+5. 后续再实现 heatmap 保存和 boxes 提取。
+6. 继续保持 `subprocess + JSON`，不要把 PyTorch/anomalib 直接 import 到 Tkinter GUI 主进程。
 
 推荐新 Codex 对话启动提示词：
 
 ```text
-请继续 D:\run_code\camera_and_algorithm 项目。先读取 AGENTS.md、CODEX_HANDOFF.md、README.md、camera/vision_robot_inspection_gui.py、CV_Project/scripts/infer_one_dummy.py。不要读取或修改 MvImport、datasets、pre_trained、captures、inspection_captures、results、output_results、bad_records、图片或模型权重。当前 GUI 已完成结果大图查看、boxes/heatmap 叠加、表格过滤、良率统计、PASS/FAIL/ERROR、暂停/继续、扫码枪预留和三色灯/蜂鸣器 stub。下一步进入真实算法接入前分析阶段，先给方案和文件清单，不要直接大改代码。
+请继续 D:\run_code\camera_and_algorithm 项目。先读取 AGENTS.md、CODEX_HANDOFF.md、README.md、CV_Project/scripts/infer_one_patchcore.py、CV_Project/scripts/infer_one_dummy.py。不要读取或修改 MvImport、pre_trained、captures、inspection_captures、results、output_results、bad_records、图片或模型权重；如需测试，只允许按用户明确指定读取 test/good 和 test/defect 图片。当前 GUI 已完成结果大图查看、boxes/heatmap 叠加、表格过滤、良率统计、PASS/FAIL/ERROR、暂停/继续、扫码枪预留和三色灯/蜂鸣器 stub。PatchCore 第一版脚本已可用 cv_lab + model.ckpt 单图推理，score 已改为 max(pred_score, anomaly_map.max)，但 good/defect 分布有重叠，暂时不要接 GUI。下一步建议批量跑完整 test/good 与 test/defect，统计 score 分布并确定 threshold，或判断是否需要重新训练 / EfficientAD。
 ```
 
 ## 历史交接状态（2026-05-18）
