@@ -100,3 +100,19 @@
   "image_path": "",
   "heatmap_path": ""
 }xxxxxxxxxx camera_and_algorithm/  camera/    vision_robot_inspection_gui.py    ec66_hik_single_pose_capture.py    hik_camera_gui.py    MvImport/    captures/    inspection_captures/  CV_Project/    config.py    main_system.py    vision_server.py    vision_server_ai.py    robot_client.py    train_my_data.py    train_my_data_efficientAD.py    anomalib/    datasets/    pre_trained/    results/    output_results/text
+
+## CODEX_HANDOFF.md 长期维护规则
+
+1. 每次修改代码、workflow、配置或重要文档后，都要检查是否需要同步更新 `CODEX_HANDOFF.md`。
+2. 如果本次任务改变了项目结构、运行方式、GUI 功能、算法接口、GitHub Actions、依赖文件或下一步计划，必须更新 `CODEX_HANDOFF.md`。
+3. `CODEX_HANDOFF.md` 需要精炼记录：
+   - 本次完成的任务
+   - 修改或新增的文件
+   - 当前可运行的流程
+   - 测试命令和测试结果
+   - 仍未完成的事项
+   - 下一步建议
+   - 新 Codex 对话启动提示词
+4. 更新 `CODEX_HANDOFF.md` 时，不要写无关长篇内容，要保持精炼、可接力。
+5. 每次提交前，提醒用户是否要把 `CODEX_HANDOFF.md` 一起提交。
+6. 不要读取或修改 `datasets/`、`pre_trained/`、`MvImport/`、`captures/`、`results/`、`output_results/`、`bad_records/`、模型权重和图片数据。
