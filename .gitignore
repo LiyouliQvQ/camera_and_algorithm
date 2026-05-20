@@ -70,6 +70,7 @@ temp/
 # Secrets
 # =========================
 .env
+algorithm_config.json
 *.key
 *.pem
 config_private.py

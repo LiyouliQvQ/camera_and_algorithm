@@ -1,0 +1,18 @@
+{
+  "active_profile": "dummy",
+  "profiles": {
+    "dummy": {
+      "mode": "python",
+      "script": "CV_Project/scripts/infer_one_dummy.py",
+      "timeout": 5
+    },
+    "patchcore_cv_lab": {
+      "mode": "conda",
+      "conda_env": "cv_lab",
+      "script": "CV_Project/scripts/infer_one_patchcore.py",
+      "model": "D:/run_code/camera_and_algorithm/CV_Project/results/Patchcore/differential_housing/v5/weights/lightning/model.ckpt",
+      "threshold": 0.5,
+      "timeout": 30
+    }
+  }
+}

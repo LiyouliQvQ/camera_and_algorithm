@@ -14,7 +14,7 @@
 - 艾利特 EC66 机械臂点位示教、序列管理和按点位运动。
 - 自动检测流程面板。
 - 自动检测最小闭环：
-  `camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Project/scripts/infer_one_dummy.py -> 返回 JSON -> GUI 显示 OK/NG`
+  `camera GUI -> 机械臂移动 -> 海康相机拍照 -> 读取算法配置 -> subprocess 调用 active_profile 脚本 -> 返回 JSON -> GUI 显示 OK/NG`
 - dummy 算法脚本支持 OK/NG 分支验证。
 - 每次自动检测结束后生成轻量 JSON 报告，默认保存到 `camera/inspection_reports/`。
 - 自动检测流程已增加运行日志、结果标准化、整件最终判定和最近报告路径查看。
@@ -81,11 +81,11 @@ camera_and_algorithm/
 2. GUI 控制 EC66 机械臂移动到检测点位。
 3. 机械臂到位后，GUI 调用海康相机软件触发拍照。
 4. 图片保存到本地检测图片目录。
-5. `DefectDetector.detect()` 通过 `subprocess.run()` 调用：
-   `CV_Project/scripts/infer_one_dummy.py`
-6. dummy 算法脚本输出 JSON。
-7. GUI 解析 JSON 并显示 `OK`、`NG` 或 `ERROR`。
-8. GUI 汇总整件产品最终结果，并保存 JSON 检测报告。
+5. `DefectDetector.detect()` 读取 `algorithm_config.json` 或 `algorithm_config.example.json` 中的 `active_profile`。
+6. GUI 通过 `subprocess.run()` 调用当前 profile 对应的算法脚本，默认是 `CV_Project/scripts/infer_one_dummy.py`。
+7. 算法脚本输出 JSON。
+8. GUI 解析 JSON 并显示 `OK`、`NG` 或 `ERROR`。
+9. GUI 汇总整件产品最终结果，并保存 JSON 检测报告。
 
 dummy 判定规则：
 
@@ -147,6 +147,31 @@ Remove-Item -Force -Path CV_Project\scripts\tmp_ng_probe.txt
 ```
 
 脚本 stdout 只输出 JSON。日志和错误信息应输出到 stderr，避免 GUI 解析 stdout 失败。
+
+## 算法调用配置
+
+GUI 启动后会优先读取根目录 `algorithm_config.json`，如果不存在则读取 `algorithm_config.example.json`；两者都不存在时，自动回退到 dummy 脚本。
+
+默认示例配置的 `active_profile` 是 `dummy`，不会默认启用实验版 PatchCore。需要本机配置时，先复制一份：
+
+```powershell
+Copy-Item algorithm_config.example.json algorithm_config.json
+```
+
+切换算法时修改 `algorithm_config.json` 中的 `active_profile`：
+
+```json
+{
+  "active_profile": "dummy"
+}
+```
+
+可选 profile：
+
+- `dummy`：使用当前 Python 调用 `CV_Project/scripts/infer_one_dummy.py`，默认超时 5 秒。
+- `patchcore_cv_lab`：使用 `conda run --no-capture-output -n cv_lab python` 调用实验版 `CV_Project/scripts/infer_one_patchcore.py`，需要本机模型路径有效，默认超时 30 秒。
+
+PatchCore 当前仍是实验版，不建议作为正式检测算法接入现场流程。回退到 dummy 时，把 `active_profile` 改回 `dummy` 即可。
 
 ## JSON 输出协议
 
@@ -212,12 +237,12 @@ camera/inspection_reports/
 
 推荐步骤：
 
-1. 在 `CV_Project/scripts/` 下新增真实推理脚本，例如 `infer_one.py`。
+1. 在 `algorithm_config.json` 中新增或切换算法 profile。
 2. 保持与 `infer_one_dummy.py` 相同的命令行参数：`--image`、`--pose`、`--product-id`。
 3. 加载 PatchCore / EfficientAD 模型并对单张图片推理。
 4. stdout 只输出兼容 JSON，字段至少包含 `ok`、`label`、`score`、`threshold`、`defect_type`、`message`、`image_path`、`heatmap_path`、`pose`、`product_id`。
 5. 如果生成热力图，将路径写入 `heatmap_path`。
-6. GUI 侧优先只把算法脚本路径从 dummy 切换到真实 `infer_one.py`，不要改机械臂和相机底层。
+6. GUI 侧优先只通过配置切换算法脚本，不要改机械臂和相机底层。
 7. 先用单图脚本验证 OK/NG/ERROR，再接入 GUI 完整流程。
 
 NG 示例：

@@ -913,6 +913,8 @@ class DefectDetector:
     def __init__(self, model_path=None):
         self.model_path = model_path
         self.model = None
+        self.project_root = Path(__file__).resolve().parents[1]
+        self.config = self.load_algorithm_config()
         self.load_model(model_path)
 
     def load_model(self, model_path=None):
@@ -936,6 +938,89 @@ class DefectDetector:
         """
         self.model_path = model_path
         self.model = None
+
+    def load_algorithm_config(self):
+        """Load algorithm profile config, preferring local config over example config."""
+        config_paths = [
+            self.project_root / "algorithm_config.json",
+            self.project_root / "algorithm_config.example.json",
+        ]
+        for config_path in config_paths:
+            if not config_path.exists():
+                continue
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                config["_config_path"] = str(config_path)
+                return config
+            except Exception as exc:
+                print(f"算法配置读取失败，将回退到dummy默认逻辑: {config_path}: {exc}")
+                break
+        return {
+            "_config_path": "",
+            "active_profile": "dummy",
+            "profiles": {
+                "dummy": {
+                    "mode": "python",
+                    "script": "CV_Project/scripts/infer_one_dummy.py",
+                    "timeout": 5,
+                }
+            },
+        }
+
+    def get_active_profile(self):
+        """Return the active algorithm profile, falling back to dummy when invalid."""
+        profiles = self.config.get("profiles", {}) if isinstance(self.config, dict) else {}
+        active_name = self.config.get("active_profile", "dummy") if isinstance(self.config, dict) else "dummy"
+        profile = profiles.get(active_name)
+        if isinstance(profile, dict):
+            return active_name, profile
+        dummy_profile = profiles.get("dummy")
+        if isinstance(dummy_profile, dict):
+            return "dummy", dummy_profile
+        return "dummy", {
+            "mode": "python",
+            "script": "CV_Project/scripts/infer_one_dummy.py",
+            "timeout": 5,
+        }
+
+    def resolve_project_path(self, path_value):
+        """Resolve relative config paths from project root."""
+        path = Path(str(path_value)).expanduser()
+        if not path.is_absolute():
+            path = self.project_root / path
+        return path
+
+    def build_algorithm_command(self, profile, image_path, pose_name, product_id):
+        """Build subprocess command for python or conda algorithm profiles."""
+        mode = str(profile.get("mode", "python")).lower()
+        script = self.resolve_project_path(profile.get("script", "CV_Project/scripts/infer_one_dummy.py"))
+        if not script.exists():
+            raise FileNotFoundError(f"算法脚本不存在：{script}")
+
+        if mode == "python":
+            cmd = [sys.executable, str(script)]
+        elif mode == "conda":
+            conda_env = str(profile.get("conda_env") or profile.get("env") or "").strip()
+            if not conda_env:
+                raise ValueError("conda算法配置缺少conda_env")
+            cmd = ["conda", "run", "--no-capture-output", "-n", conda_env, "python", str(script)]
+        else:
+            raise ValueError(f"不支持的算法调用模式：{mode}")
+
+        cmd.extend([
+            "--image", str(image_path),
+            "--pose", str(pose_name or ""),
+            "--product-id", str(product_id or ""),
+        ])
+
+        if profile.get("model"):
+            cmd.extend(["--model", str(self.resolve_project_path(profile["model"]))])
+        if profile.get("threshold") is not None:
+            cmd.extend(["--threshold", str(profile["threshold"])])
+
+        timeout = int(profile.get("timeout", 5))
+        return cmd, script, timeout
 
     def detect(self, frame_rgb, frame_gray=None, image_path=None, pose_name="", product_id=""):
         """
@@ -965,31 +1050,29 @@ class DefectDetector:
         if not image_path:
             return error_result("算法调用失败：image_path为空")
 
-        project_root = Path(__file__).resolve().parents[1]
-        infer_script = project_root / "CV_Project" / "scripts" / "infer_one_dummy.py"
-        script_path = str(infer_script)
-        if not infer_script.exists():
-            return error_result(f"算法脚本不存在：{infer_script}")
-
-        cmd = [
-            sys.executable,
-            str(infer_script),
-            "--image", str(image_path),
-            "--pose", str(pose_name or ""),
-            "--product-id", str(product_id or ""),
-        ]
+        profile_name, profile = self.get_active_profile()
+        try:
+            cmd, infer_script, timeout = self.build_algorithm_command(
+                profile=profile,
+                image_path=image_path,
+                pose_name=pose_name,
+                product_id=product_id,
+            )
+            script_path = str(infer_script)
+        except Exception as e:
+            return error_result(f"算法配置错误：{e}")
 
         try:
             completed = subprocess.run(
                 cmd,
-                timeout=5,
+                timeout=timeout,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                cwd=str(project_root),
+                cwd=str(self.project_root),
             )
         except subprocess.TimeoutExpired:
-            return error_result("算法调用超时：超过5秒")
+            return error_result(f"算法调用超时：超过{timeout}秒")
         except Exception as e:
             return error_result(f"算法调用异常：{e}")
 
@@ -1014,6 +1097,7 @@ class DefectDetector:
         result.setdefault("pose", pose_name or "")
         result.setdefault("product_id", product_id or "")
         result.setdefault("algorithm_script", script_path)
+        result.setdefault("algorithm_profile", profile_name)
         result.setdefault("elapsed_ms", int((time.time() - started_at) * 1000))
         result.setdefault("boxes", [])
         return result

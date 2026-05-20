@@ -72,6 +72,16 @@ git status --short
 - 后续等数据集收集和标注足够后，再重新训练 PatchCore / EfficientAD，并重新评估 score 分布、threshold、heatmap 与 boxes 输出。
 - 下一步工作重点从调模型转为数据采集与标注闭环：稳定采图、归档 OK/NG 样本、整理缺陷类别、形成可复训数据集。
 
+算法调用配置化方案：
+
+- 新增根目录 `algorithm_config.example.json`，默认 `active_profile` 为 `dummy`，不会默认启用实验版 PatchCore。
+- GUI 启动后 `DefectDetector` 优先读取 `algorithm_config.json`，不存在则读取 `algorithm_config.example.json`，两者都不存在则回退到内置 dummy 调用逻辑。
+- `dummy` profile 使用当前 Python 调用 `CV_Project/scripts/infer_one_dummy.py`，timeout 为 5 秒。
+- `patchcore_cv_lab` profile 使用 `conda run --no-capture-output -n cv_lab python` 调用 `CV_Project/scripts/infer_one_patchcore.py`，传入 model、threshold 和 timeout 30 秒。
+- `DefectDetector.detect()` 根据 profile 构造命令，统一传入 `--image --pose --product-id`，配置含 `model/threshold` 时追加 `--model/--threshold`。
+- stdout 仍只解析 JSON；脚本失败、超时、JSON 解析失败或配置错误时返回 `label="ERROR"`，GUI 不崩溃。
+- 本次只做配置化，不改变自动检测主流程，不运行 PatchCore 推理，不接真实相机或机械臂测试。
+
 本轮测试命令与结果：
 
 ```powershell
@@ -107,7 +117,7 @@ conda run --no-capture-output -n cv_lab python CV_Project\scripts\infer_one_patc
 当前可运行流程：
 
 ```text
-camera GUI -> 机械臂移动 -> 海康相机拍照 -> subprocess 调用 CV_Project/scripts/infer_one_dummy.py -> 返回 JSON -> GUI 显示 OK/NG/ERROR -> 保存 JSON 报告
+camera GUI -> 机械臂移动 -> 海康相机拍照 -> DefectDetector 读取算法配置 -> subprocess 调用 active_profile 脚本 -> 返回 JSON -> GUI 显示 OK/NG/ERROR -> 保存 JSON 报告
 ```
 
 仍未完成：
