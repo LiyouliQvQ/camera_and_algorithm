@@ -203,6 +203,7 @@ camera/inspection_reports/
 报告包含：
 
 - `product_id`
+- `workpiece_type`
 - `start_time`
 - `end_time`
 - `final_label`
@@ -215,6 +216,7 @@ camera/inspection_reports/
 
 - `idx`
 - `pose`
+- `workpiece_type`
 - `image_path`
 - `label`
 - `score`
@@ -230,6 +232,55 @@ camera/inspection_reports/
 - 任一点位 `ERROR`，整件产品 `ERROR`。
 - 否则任一点位 `NG`，整件产品 `NG`。
 - 全部点位 `OK`，整件产品 `OK`。
+
+## 多工件型号与多位姿算法配置
+
+算法配置分为两层：
+
+- `profiles`：定义算法脚本如何运行，例如 `dummy`、`patchcore_default`、`patchcore_cv_lab`。
+- `workpiece_models`：定义工件型号，以及每个型号下不同 `pose_name` 使用的 profile、模型路径、threshold 和 timeout。
+
+`algorithm_config.example.json` 是可提交的模板；真实现场路径、真实模型权重和阈值请复制到本地 `algorithm_config.json` 后修改。`algorithm_config.json` 已加入 `.gitignore`，不要提交。
+
+默认配置保持：
+
+```json
+{
+  "active_profile": "dummy",
+  "active_workpiece_type": "demo_default"
+}
+```
+
+`demo_default` 的 `default_profile` 必须保持为 `dummy`，这样 GUI 默认不会误调用 PatchCore / EfficientAD。
+
+同一工件型号下，可以按机械臂位姿配置不同模型：
+
+```json
+{
+  "workpiece_models": {
+    "differential_housing_v1": {
+      "default_profile": "patchcore_default",
+      "pose_profiles": {
+        "P01_front": {
+          "profile": "patchcore_default",
+          "model": "D:/path/to/P01_front/model.ckpt",
+          "threshold": 0.45,
+          "timeout": 30
+        }
+      }
+    }
+  }
+}
+```
+
+选择逻辑：
+
+1. 优先使用 `workpiece_type + pose_name` 对应的 `pose_profiles`。
+2. 如果该位姿未配置，回退到当前工件型号的 `default_profile`。
+3. 如果工件型号不存在，回退到全局 `active_profile`。
+4. 如果全局 profile 也无效，最终回退到内置 dummy。
+
+如需从 dummy 切换到实验 PatchCore，可在本地 `algorithm_config.json` 中把某个工件型号的 `default_profile` 或某个 `pose_profiles` 项改为 `patchcore_default` / `patchcore_cv_lab`，并填写本机真实模型路径与阈值。当前 PatchCore / EfficientAD 仍是实验选项，不默认启用。
 
 ## 如何接入 PatchCore / EfficientAD
 

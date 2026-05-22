@@ -553,6 +553,23 @@ class CameraUIController:
         finally:
             self._schedule_preview()
 
+    def save_image_windows_safe(self, path, image):
+        """Save a PNG robustly on Windows paths and verify the output file."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shape = getattr(image, "shape", None)
+        dtype = getattr(image, "dtype", None)
+        try:
+            ok, encoded = cv2.imencode(".png", image)
+            if not ok:
+                raise CameraError(f"PNG编码失败: path={path}, shape={shape}, dtype={dtype}")
+            encoded.tofile(str(path))
+        except Exception as exc:
+            raise CameraError(f"保存检测图片失败: path={path}, shape={shape}, dtype={dtype}, error={exc}") from exc
+
+        if not path.exists() or path.stat().st_size <= 0:
+            raise CameraError(f"保存检测图片失败: 文件为空或不存在, path={path}, shape={shape}, dtype={dtype}")
+
     def capture_for_inspection(self, pose_name="pose", product_id="", save_dir=None, timeout=3.0):
         """
         自动检测流程专用采图函数。
@@ -584,12 +601,10 @@ class CameraUIController:
 
         # 缺陷检测通常保存灰度图更稳定；如果是彩色相机也可改成保存 BGR 彩图
         if frame_gray is not None:
-            ok = cv2.imwrite(str(image_path), frame_gray)
+            image_to_save = frame_gray
         else:
-            ok = cv2.imwrite(str(image_path), cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
-
-        if not ok:
-            raise CameraError("OpenCV 保存检测图片失败")
+            image_to_save = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        self.save_image_windows_safe(image_path, image_to_save)
 
         self.root.after(0, lambda: self.set_status(f"检测采图完成: {image_path.name}"))
         return str(image_path), frame_rgb, frame_gray, ts
@@ -880,6 +895,19 @@ class RobotUIController:
     def save_current_pose(self):
         name = simpledialog.askstring("保存点位", "请输入点位名称:")
         if name:
+            name = name.strip()
+            if not name:
+                return
+            if name in self.saved_poses:
+                should_overwrite = messagebox.askyesno(
+                    "确认覆盖点位",
+                    f"点位名称 '{name}' 已存在，是否覆盖？\n\n"
+                    "覆盖后 saved_poses.json 中该点位坐标会更新。\n"
+                    "所有引用该点位名称的检测序列会使用新的坐标。\n"
+                    "algorithm_config.json 中同名 pose_profiles 仍然会继续匹配该点位。"
+                )
+                if not should_overwrite:
+                    return
             self.saved_poses[name] = list(self.current_pose); self.save_poses_to_file(); self.refresh_listbox()
     def delete_selected(self):
         sel = self.listbox.curselection()
@@ -959,6 +987,7 @@ class DefectDetector:
         return {
             "_config_path": "",
             "active_profile": "dummy",
+            "active_workpiece_type": "demo_default",
             "profiles": {
                 "dummy": {
                     "mode": "python",
@@ -966,6 +995,14 @@ class DefectDetector:
                     "timeout": 5,
                 }
             },
+        }
+
+    def get_dummy_profile(self):
+        """Return the built-in dummy profile used as the final safe fallback."""
+        return {
+            "mode": "python",
+            "script": "CV_Project/scripts/infer_one_dummy.py",
+            "timeout": 5,
         }
 
     def get_active_profile(self):
@@ -978,11 +1015,75 @@ class DefectDetector:
         dummy_profile = profiles.get("dummy")
         if isinstance(dummy_profile, dict):
             return "dummy", dummy_profile
-        return "dummy", {
-            "mode": "python",
-            "script": "CV_Project/scripts/infer_one_dummy.py",
-            "timeout": 5,
-        }
+        return "dummy", self.get_dummy_profile()
+
+    def get_workpiece_display_map(self):
+        """Return GUI display text mapped to workpiece type keys."""
+        workpieces = self.config.get("workpiece_models", {}) if isinstance(self.config, dict) else {}
+        display_map = {}
+        if isinstance(workpieces, dict):
+            for key, item in workpieces.items():
+                if not isinstance(item, dict):
+                    continue
+                display = str(item.get("display_name") or key)
+                display_map[f"{display} ({key})"] = key
+        if not display_map:
+            display_map["demo_default"] = "demo_default"
+        return display_map
+
+    def get_active_workpiece_type(self):
+        """Return configured active workpiece type or demo_default."""
+        if isinstance(self.config, dict):
+            return str(self.config.get("active_workpiece_type") or "demo_default")
+        return "demo_default"
+
+    def merge_profile(self, profile_name, overrides=None):
+        """Merge a global profile with pose-specific overrides."""
+        profiles = self.config.get("profiles", {}) if isinstance(self.config, dict) else {}
+        base = profiles.get(profile_name)
+        if not isinstance(base, dict):
+            raise ValueError(f"算法profile不存在：{profile_name}")
+        merged = dict(base)
+        if isinstance(overrides, dict):
+            for key, value in overrides.items():
+                if key != "profile":
+                    merged[key] = value
+        return merged
+
+    def resolve_algorithm_profile(self, workpiece_type="", pose_name=""):
+        """Resolve profile by workpiece type and pose, then fall back safely."""
+        workpiece_type = str(workpiece_type or "").strip()
+        pose_name = str(pose_name or "").strip()
+        workpieces = self.config.get("workpiece_models", {}) if isinstance(self.config, dict) else {}
+
+        if isinstance(workpieces, dict) and workpiece_type in workpieces:
+            workpiece = workpieces[workpiece_type]
+            if not isinstance(workpiece, dict):
+                raise ValueError(f"工件型号配置无效：{workpiece_type}")
+
+            pose_profiles = workpiece.get("pose_profiles", {})
+            if isinstance(pose_profiles, dict) and pose_name in pose_profiles:
+                pose_config = pose_profiles[pose_name]
+                if not isinstance(pose_config, dict):
+                    raise ValueError(f"点位算法配置无效：{workpiece_type}/{pose_name}")
+                profile_name = str(pose_config.get("profile") or workpiece.get("default_profile") or "")
+                if not profile_name:
+                    raise ValueError(f"点位算法配置缺少profile：{workpiece_type}/{pose_name}")
+                return profile_name, self.merge_profile(profile_name, pose_config), "pose"
+
+            default_profile = workpiece.get("default_profile")
+            if isinstance(default_profile, dict):
+                profile_name = str(default_profile.get("profile") or "")
+                if not profile_name:
+                    raise ValueError(f"工件默认算法配置缺少profile：{workpiece_type}")
+                return profile_name, self.merge_profile(profile_name, default_profile), "workpiece_default"
+            if default_profile:
+                profile_name = str(default_profile)
+                return profile_name, self.merge_profile(profile_name), "workpiece_default"
+            raise ValueError(f"工件型号缺少default_profile：{workpiece_type}")
+
+        profile_name, profile = self.get_active_profile()
+        return profile_name, dict(profile), "active_profile"
 
     def resolve_project_path(self, path_value):
         """Resolve relative config paths from project root."""
@@ -999,7 +1100,8 @@ class DefectDetector:
             raise FileNotFoundError(f"算法脚本不存在：{script}")
 
         if mode == "python":
-            cmd = [sys.executable, str(script)]
+            python_exe = str(profile.get("python_exe") or sys.executable)
+            cmd = [python_exe, str(script)]
         elif mode == "conda":
             conda_env = str(profile.get("conda_env") or profile.get("env") or "").strip()
             if not conda_env:
@@ -1022,13 +1124,15 @@ class DefectDetector:
         timeout = int(profile.get("timeout", 5))
         return cmd, script, timeout
 
-    def detect(self, frame_rgb, frame_gray=None, image_path=None, pose_name="", product_id=""):
+    def detect(self, frame_rgb, frame_gray=None, image_path=None, pose_name="", product_id="", workpiece_type=""):
         """
         自动检测主入口。
         你后续只需要改这个函数内部的 TODO 区域即可。
         """
         started_at = time.time()
         script_path = ""
+        profile_name = ""
+        profile_source = ""
 
         def error_result(message):
             return {
@@ -1042,7 +1146,10 @@ class DefectDetector:
                 "heatmap_path": "",
                 "pose": pose_name or "",
                 "product_id": product_id or "",
+                "workpiece_type": workpiece_type or "",
                 "algorithm_script": script_path,
+                "algorithm_profile": profile_name,
+                "algorithm_profile_source": profile_source,
                 "elapsed_ms": int((time.time() - started_at) * 1000),
                 "boxes": []
             }
@@ -1050,8 +1157,11 @@ class DefectDetector:
         if not image_path:
             return error_result("算法调用失败：image_path为空")
 
-        profile_name, profile = self.get_active_profile()
         try:
+            profile_name, profile, profile_source = self.resolve_algorithm_profile(
+                workpiece_type=workpiece_type,
+                pose_name=pose_name,
+            )
             cmd, infer_script, timeout = self.build_algorithm_command(
                 profile=profile,
                 image_path=image_path,
@@ -1062,6 +1172,8 @@ class DefectDetector:
         except Exception as e:
             return error_result(f"算法配置错误：{e}")
 
+        child_env = os.environ.copy()
+        child_env["PYTHONIOENCODING"] = "utf-8"
         try:
             completed = subprocess.run(
                 cmd,
@@ -1069,6 +1181,8 @@ class DefectDetector:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                errors="replace",
+                env=child_env,
                 cwd=str(self.project_root),
             )
         except subprocess.TimeoutExpired:
@@ -1077,7 +1191,7 @@ class DefectDetector:
             return error_result(f"算法调用异常：{e}")
 
         if completed.returncode != 0:
-            stderr = (completed.stderr or "").strip()
+            stderr = (completed.stderr or "").strip()[:300]
             return error_result(f"算法脚本执行失败：{stderr or completed.returncode}")
 
         try:
@@ -1096,8 +1210,10 @@ class DefectDetector:
         result.setdefault("heatmap_path", "")
         result.setdefault("pose", pose_name or "")
         result.setdefault("product_id", product_id or "")
+        result.setdefault("workpiece_type", workpiece_type or "")
         result.setdefault("algorithm_script", script_path)
         result.setdefault("algorithm_profile", profile_name)
+        result.setdefault("algorithm_profile_source", profile_source)
         result.setdefault("elapsed_ms", int((time.time() - started_at) * 1000))
         result.setdefault("boxes", [])
         return result
@@ -1145,6 +1261,8 @@ class InspectionUIController:
         self.camera_app = camera_app
         self.robot_app = robot_app
         self.detector = DefectDetector()
+        self.workpiece_display_map = self.detector.get_workpiece_display_map()
+        self.workpiece_type_var = tk.StringVar()
 
         self.is_running = False
         self.stop_event = threading.Event()
@@ -1166,6 +1284,18 @@ class InspectionUIController:
 
         self._build_ui()
 
+    def get_workpiece_display_for_key(self, key):
+        """Return the combobox display text for a workpiece key."""
+        for display, value in self.workpiece_display_map.items():
+            if value == key:
+                return display
+        return next(iter(self.workpiece_display_map), "demo_default")
+
+    def get_selected_workpiece_type(self):
+        """Return the selected workpiece type key from the GUI combobox."""
+        display = self.workpiece_type_var.get()
+        return self.workpiece_display_map.get(display, display or "demo_default")
+
     def _build_ui(self):
         top = ttk.LabelFrame(self.parent, text="自动检测流程")
         top.pack(fill=tk.X, padx=10, pady=10)
@@ -1178,6 +1308,17 @@ class InspectionUIController:
         self.product_id_entry = ttk.Entry(row1, textvariable=self.product_id_var, width=28)
         self.product_id_entry.pack(side=tk.LEFT, padx=(4, 6))
         self.product_id_entry.bind("<Return>", self.on_barcode_entered)
+        ttk.Label(row1, text="工件型号:").pack(side=tk.LEFT, padx=(8, 0))
+        self.workpiece_type_combo = ttk.Combobox(
+            row1,
+            textvariable=self.workpiece_type_var,
+            values=list(self.workpiece_display_map.keys()),
+            width=30,
+            state="readonly"
+        )
+        active_workpiece = self.detector.get_active_workpiece_type()
+        self.workpiece_type_var.set(self.get_workpiece_display_for_key(active_workpiece))
+        self.workpiece_type_combo.pack(side=tk.LEFT, padx=(4, 12))
         ttk.Label(row1, text="扫码枪预留: 键盘输入后回车").pack(side=tk.LEFT, padx=(0, 12))
 
         ttk.Label(row1, text="采图超时(s):").pack(side=tk.LEFT)
@@ -1375,7 +1516,7 @@ class InspectionUIController:
         self.root.after(0, lambda m=str(message): self.set_status(m))
         return entry
 
-    def normalize_detection_result(self, result, idx, pose_name, image_path="", product_id=""):
+    def normalize_detection_result(self, result, idx, pose_name, image_path="", product_id="", workpiece_type=""):
         if not isinstance(result, dict):
             result = {
                 "ok": False,
@@ -1411,7 +1552,10 @@ class InspectionUIController:
             "message": result.get("message", ""),
             "heatmap_path": result.get("heatmap_path", ""),
             "product_id": product_id or result.get("product_id", ""),
+            "workpiece_type": workpiece_type or result.get("workpiece_type", ""),
             "algorithm_script": result.get("algorithm_script", ""),
+            "algorithm_profile": result.get("algorithm_profile", ""),
+            "algorithm_profile_source": result.get("algorithm_profile_source", ""),
             "elapsed_ms": int(result.get("elapsed_ms", 0) or 0),
             "boxes": result.get("boxes", [])
         }
@@ -1425,7 +1569,7 @@ class InspectionUIController:
             return "NG"
         return "OK"
 
-    def save_inspection_report(self, product_id, start_time, end_time, final_label):
+    def save_inspection_report(self, product_id, workpiece_type, start_time, end_time, final_label):
         report_dir = THIS_DIR / "inspection_reports"
         report_dir.mkdir(parents=True, exist_ok=True)
         safe_product_id = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(product_id))
@@ -1434,6 +1578,7 @@ class InspectionUIController:
 
         report = {
             "product_id": product_id,
+            "workpiece_type": workpiece_type,
             "start_time": start_time,
             "end_time": end_time,
             "final_label": final_label,
@@ -1516,6 +1661,7 @@ class InspectionUIController:
 
     def _run_inspection_logic(self):
         product_id = self.product_id_var.get().strip() or self.generate_product_id()
+        workpiece_type = self.get_selected_workpiece_type()
         timeout = float(self.capture_timeout_var.get() or 3.0)
         start_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1523,7 +1669,7 @@ class InspectionUIController:
         had_runtime_error = False
 
         try:
-            self.append_log(f"开始检测: product_id={product_id}")
+            self.append_log(f"开始检测: product_id={product_id}, workpiece_type={workpiece_type}")
             for idx, step in enumerate(list(self.robot_app.sequence_list), start=1):
                 if self.stop_event.is_set() or not self.robot_app.connected:
                     self.append_log("检测流程被停止或机械臂连接断开", level="WARN")
@@ -1542,7 +1688,8 @@ class InspectionUIController:
                         idx,
                         pose_name,
                         "",
-                        product_id
+                        product_id,
+                        workpiece_type
                     )
                     self._append_result(result)
                     self.append_log(f"点位不存在: {pose_name}", level="ERROR")
@@ -1592,10 +1739,11 @@ class InspectionUIController:
                     frame_gray=frame_gray,
                     image_path=image_path,
                     pose_name=pose_name,
-                    product_id=product_id
+                    product_id=product_id,
+                    workpiece_type=workpiece_type
                 )
 
-                normalized = self.normalize_detection_result(result, idx, pose_name, image_path, product_id)
+                normalized = self.normalize_detection_result(result, idx, pose_name, image_path, product_id, workpiece_type)
                 self._append_result(normalized)
                 self.append_log(
                     f"[{idx}] 点位 {pose_name} 识别完成: {normalized['label']} "
@@ -1619,7 +1767,7 @@ class InspectionUIController:
             if self.results:
                 final_label = "ERROR" if had_runtime_error else self.compute_final_label(self.results)
                 try:
-                    self.save_inspection_report(product_id, start_time, end_time, final_label)
+                    self.save_inspection_report(product_id, workpiece_type, start_time, end_time, final_label)
                 except Exception as report_error:
                     self.append_log(f"保存检测报告失败: {report_error}", level="ERROR")
             if self.results and not self.stop_event.is_set():
@@ -1653,6 +1801,7 @@ class InspectionUIController:
             }
         row.setdefault("boxes", [])
         row.setdefault("heatmap_path", "")
+        row.setdefault("workpiece_type", "")
         self.all_detection_results.append(row)
         self.root.after(0, lambda: (self.refresh_result_tree(), self.update_statistics()))
 

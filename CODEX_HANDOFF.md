@@ -1,5 +1,64 @@
 # Codex Handoff
 
+## 新对话接力摘要（2026-05-22）
+
+当前未提交状态：
+
+```text
+ M CODEX_HANDOFF.md
+ M README.md
+ M algorithm_config.example.json
+ M camera/vision_robot_inspection_gui.py
+?? HANDOFF_20260521_153625.md
+```
+
+本轮已完成但尚未提交：
+
+- 工件型号 + 位姿级算法配置化。
+- `algorithm_config.example.json` 已支持 `workpiece_models`、`active_workpiece_type`、`pose_profiles`。
+- GUI 自动检测页已增加“工件型号” Combobox。
+- `DefectDetector` 已支持按 `workpiece_type + pose_name` 选择模型配置。
+- 默认仍然是 `dummy`，不默认启用 PatchCore / EfficientAD。
+
+本轮根据 B handoff 已合并的低风险修复：
+
+- `DefectDetector.detect()` 的 subprocess 调用增加 `PYTHONIOENCODING=utf-8`。
+- `subprocess.run()` 增加 `encoding="utf-8"`、`errors="replace"`、`env=child_env`。
+- stderr 摘要截断到 300 字符。
+- `CameraUIController` 新增 `save_image_windows_safe(path, image)`。
+- inspection image 保存改为 `cv2.imencode(".png", image)[1].tofile(str(path))`。
+- 保存前创建父目录，保存后检查文件存在和大小。
+- 保留 `safe_name()`，降低中文路径、中文点位名、空格和特殊字符导致保存失败的风险。
+
+B handoff 的真实设备验证事实：
+
+- 真实海康相机预览已验证。
+- 真实 EC66 机械臂序列已验证。
+- 真实相机拍照保存已验证。
+- dummy 算法调用已验证。
+- 9 个点位 OK，最终 PASS。
+- 这只是工程链路验证，不代表真实缺陷检测模型已验证。
+
+当前暂未采纳的 B 建议：
+
+- dummy robot mode。
+- dummy capture。
+- 原因：这两个会改自动检测流程，后续如需要无硬件测试再单独做。
+
+当前不应提交：
+
+- `HANDOFF_20260521_153625.md`，除非用户明确要求。
+- `algorithm_config.json`。
+- `datasets/`、`results/`、`output_results/`、`pre_trained/`。
+- `MvImport/`、`captures/`、`inspection_captures/`。
+- 图片文件、模型权重、`.env`、`__pycache__/`、`.venv/`。
+
+新 Codex 对话启动提示词：
+
+```text
+请继续 D:\run_code\camera_and_algorithm 项目。先只读取 AGENTS.md、CODEX_HANDOFF.md、README.md、algorithm_config.example.json、camera/vision_robot_inspection_gui.py，不要修改代码，先总结当前状态。不要读取 datasets、results、output_results、pre_trained、MvImport、captures、inspection_captures、anomalib、图片文件或模型权重。当前有未提交改动：工件型号+位姿级算法配置化、B handoff 的 subprocess UTF-8 修复、Windows-safe inspection image 保存修复、CODEX_HANDOFF 更新；HANDOFF_20260521_153625.md 是审查资料，除非用户明确要求不要提交。
+```
+
 本文档是给 Codex 后续继续开发时读取的上下文浓缩文件，不是普通用户文档。
 
 ## 最新交接状态（2026-05-19）
@@ -81,6 +140,42 @@ git status --short
 - `DefectDetector.detect()` 根据 profile 构造命令，统一传入 `--image --pose --product-id`，配置含 `model/threshold` 时追加 `--model/--threshold`。
 - stdout 仍只解析 JSON；脚本失败、超时、JSON 解析失败或配置错误时返回 `label="ERROR"`，GUI 不崩溃。
 - 本次只做配置化，不改变自动检测主流程，不运行 PatchCore 推理，不接真实相机或机械臂测试。
+
+本次新增多工件/多位姿算法配置预留：
+
+- `algorithm_config.example.json` 已预留 `active_workpiece_type` 和 `workpiece_models`。
+- GUI 自动检测页新增“工件型号”下拉框，默认读取 `active_workpiece_type=demo_default`。
+- `demo_default` 的 `default_profile` 仍为 `dummy`，默认不会调用 PatchCore / EfficientAD。
+- `DefectDetector.detect()` 已支持接收 `workpiece_type`，并按 `workpiece_type + pose_name` 优先查找 `pose_profiles`。
+- 已预留按工件型号切换整套权重：每个 `workpiece_models.<type>` 可配置自己的 `default_profile`。
+- 已预留按 `pose_name` 切换单点位权重：每个 pose 可覆盖 `profile/model/threshold/timeout`。
+- 回退顺序：`workpiece_type + pose_name` -> 工件 `default_profile` -> 全局 `active_profile` -> 内置 dummy。
+- 检测结果和 JSON 报告新增 `workpiece_type` 字段，旧字段保持兼容。
+- 后续数据足够后，可为每个工件型号、每个检测位姿单独训练 PatchCore / EfficientAD 模型，再填入本地 `algorithm_config.json`。
+- 本次检查通过：
+  - `python -m json.tool algorithm_config.example.json`
+  - `python -m py_compile camera/vision_robot_inspection_gui.py`
+  - `python scripts/smoke_test_dummy.py`
+- 机械臂示教点位保存已增加重名覆盖确认：覆盖前提示 `saved_poses.json` 坐标会更新、检测序列会使用新坐标、`algorithm_config.json` 同名 `pose_profiles` 仍继续匹配；取消时不覆盖。
+- 点位覆盖确认修改后已通过 `python -m py_compile camera/vision_robot_inspection_gui.py`。
+
+B handoff 审查合并记录（HANDOFF_20260521_153625.md）：
+
+- 另一个环境已验证真实相机 + 真实机械臂 + dummy 算法工程链路：
+  - 真实相机预览正常。
+  - 真实机械臂执行检测序列。
+  - 真实相机拍照并保存 inspection image。
+  - GUI 成功调用 `CV_Project/scripts/infer_one_dummy.py`。
+  - 9 个点位全部 OK。
+  - 最终状态 PASS。
+- 该结果只代表工程链路验证通过，不代表真实 PatchCore / EfficientAD 缺陷检测模型已经验证。
+- 本轮已采纳低风险修复：
+  - `DefectDetector.detect()` 子进程调用设置 `PYTHONIOENCODING=utf-8`，并使用 `encoding="utf-8"`、`errors="replace"`。
+  - `CameraUIController.capture_for_inspection()` 的 inspection image 保存改为 Windows-safe PNG 保存：`cv2.imencode(".png", image)[1].tofile(str(path))`，并检查文件存在且大小大于 0。
+- 本轮暂未采纳：
+  - dummy robot mode。
+  - dummy capture。
+  - 原因：先降低改动风险，只合并真实设备链路中暴露的编码和保存稳定性问题；无硬件 GUI 测试能力后续如需要再单独实现。
 
 本轮测试命令与结果：
 

@@ -1,10 +1,20 @@
 {
   "active_profile": "dummy",
+  "active_workpiece_type": "demo_default",
   "profiles": {
     "dummy": {
       "mode": "python",
+      "python_exe": "python",
       "script": "CV_Project/scripts/infer_one_dummy.py",
       "timeout": 5
+    },
+    "patchcore_default": {
+      "mode": "conda",
+      "conda_env": "cv_lab",
+      "script": "CV_Project/scripts/infer_one_patchcore.py",
+      "model": "D:/run_code/camera_and_algorithm/CV_Project/results/Patchcore/differential_housing/default/weights/lightning/model.ckpt",
+      "threshold": 0.5,
+      "timeout": 30
     },
     "patchcore_cv_lab": {
       "mode": "conda",
@@ -13,6 +23,43 @@
       "model": "D:/run_code/camera_and_algorithm/CV_Project/results/Patchcore/differential_housing/v5/weights/lightning/model.ckpt",
       "threshold": 0.5,
       "timeout": 30
+    }
+  },
+  "workpiece_models": {
+    "demo_default": {
+      "display_name": "默认演示工件",
+      "default_profile": "dummy",
+      "pose_profiles": {}
+    },
+    "differential_housing_v1": {
+      "display_name": "差速器壳体 V1",
+      "default_profile": "patchcore_default",
+      "pose_profiles": {
+        "P01_front": {
+          "profile": "patchcore_default",
+          "model": "D:/run_code/camera_and_algorithm/CV_Project/results/Patchcore/differential_housing/V1/P01_front/weights/lightning/model.ckpt",
+          "threshold": 0.45,
+          "timeout": 30
+        },
+        "P02_left": {
+          "profile": "patchcore_default",
+          "model": "D:/run_code/camera_and_algorithm/CV_Project/results/Patchcore/differential_housing/V1/P02_left/weights/lightning/model.ckpt",
+          "threshold": 0.5,
+          "timeout": 30
+        }
+      }
+    },
+    "differential_housing_v2": {
+      "display_name": "差速器壳体 V2",
+      "default_profile": "patchcore_default",
+      "pose_profiles": {
+        "P01_front": {
+          "profile": "patchcore_default",
+          "model": "D:/run_code/camera_and_algorithm/CV_Project/results/Patchcore/differential_housing/V2/P01_front/weights/lightning/model.ckpt",
+          "threshold": 0.48,
+          "timeout": 30
+        }
+      }
     }
   }
 }
