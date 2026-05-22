@@ -340,6 +340,26 @@ CV_Project/datasets_collected/manifest.csv
 
 `CV_Project/datasets_collected/` 已加入 `.gitignore`，采集图片和 manifest 不提交到 GitHub。
 
+## 机械臂模拟模式
+
+自动检测页提供“机械臂模拟模式”，用于在没有真实 EC66 机械臂连接时验证 GUI 自动检测流程。该模式默认关闭；关闭时仍保持原有真实机械臂连接和运动逻辑。
+
+启用后：
+
+- 可以在未连接 EC66 机械臂时开始自动检测。
+- 不调用真实机械臂 socket 命令。
+- 不调用 `RobotUIController.execute_movement()`。
+- 每个检测位姿会记录“模拟机械臂移动到点位 xxx”，并短暂等待约 0.2 秒。
+- 点位仍必须存在于 `saved_poses.json`，否则继续按原有逻辑返回 `ERROR`。
+- 不模拟相机，仍要求真实海康相机已打开，拍照仍走 `capture_for_inspection()`。
+- 不影响数据采集模式；如果同时启用数据采集模式，拍照成功后仍会复制图片并追加 manifest。
+
+该模式适合“无机械臂但有相机”的桌面或现场调试，用来验证：
+
+```text
+GUI 自动检测流程 -> 真实相机拍照 -> dummy/配置算法调用 -> 结果显示 -> 报告保存 -> 可选数据采集归档
+```
+
 ## 如何接入 PatchCore / EfficientAD
 
 建议保持现有 `subprocess + JSON` 集成方式，不直接把 GUI 与深度学习环境强绑定。

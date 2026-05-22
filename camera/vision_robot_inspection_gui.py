@@ -1287,6 +1287,7 @@ class InspectionUIController:
         self.collection_enabled_var = tk.BooleanVar(value=False)
         self.collection_batch_var = tk.StringVar(value=time.strftime("BATCH_%Y%m%d_%H%M%S"))
         self.collection_type_var = tk.StringVar(value="train/good")
+        self.robot_simulation_enabled_var = tk.BooleanVar(value=False)
 
         self._build_ui()
 
@@ -1301,6 +1302,10 @@ class InspectionUIController:
         """Return the selected workpiece type key from the GUI combobox."""
         display = self.workpiece_type_var.get()
         return self.workpiece_display_map.get(display, display or "demo_default")
+
+    def is_robot_ready_for_inspection(self):
+        """Return True when inspection may proceed with real or simulated robot motion."""
+        return self.robot_simulation_enabled_var.get() or self.robot_app.connected
 
     def _build_ui(self):
         top = ttk.LabelFrame(self.parent, text="自动检测流程")
@@ -1334,6 +1339,14 @@ class InspectionUIController:
         ttk.Button(row1, text="选择图片保存目录", command=self.choose_save_dir).pack(side=tk.LEFT, padx=4)
         self.save_dir_label = ttk.Label(row1, text=self.save_dir, wraplength=560)
         self.save_dir_label.pack(side=tk.LEFT, padx=8)
+
+        robot_sim_row = ttk.Frame(top)
+        robot_sim_row.pack(fill=tk.X, padx=8, pady=(0, 6))
+        ttk.Checkbutton(
+            robot_sim_row,
+            text="启用机械臂模拟模式",
+            variable=self.robot_simulation_enabled_var
+        ).pack(side=tk.LEFT)
 
         collection_group = ttk.LabelFrame(top, text="数据采集模式")
         collection_group.pack(fill=tk.X, padx=8, pady=(2, 6))
@@ -1781,7 +1794,7 @@ class InspectionUIController:
         if self.is_running:
             return
 
-        if not self.robot_app.connected:
+        if not self.is_robot_ready_for_inspection():
             messagebox.showwarning("提示", "请先连接机械臂")
             return
 
@@ -1820,6 +1833,7 @@ class InspectionUIController:
         product_id = self.product_id_var.get().strip() or self.generate_product_id()
         workpiece_type = self.get_selected_workpiece_type()
         timeout = float(self.capture_timeout_var.get() or 3.0)
+        robot_simulation_enabled = self.robot_simulation_enabled_var.get()
         start_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
         final_label = "ERROR"
@@ -1828,7 +1842,7 @@ class InspectionUIController:
         try:
             self.append_log(f"开始检测: product_id={product_id}, workpiece_type={workpiece_type}")
             for idx, step in enumerate(list(self.robot_app.sequence_list), start=1):
-                if self.stop_event.is_set() or not self.robot_app.connected:
+                if self.stop_event.is_set() or not self.is_robot_ready_for_inspection():
                     self.append_log("检测流程被停止或机械臂连接断开", level="WARN")
                     break
 
@@ -1855,9 +1869,13 @@ class InspectionUIController:
                 self.append_log(f"[{idx}] 移动到点位: {pose_name}")
 
                 # 1) 机械臂移动到指定点位；execute_movement 内部会等待 getRobotState == 0
-                self.robot_app.execute_movement(self.robot_app.saved_poses[pose_name], speed)
+                if robot_simulation_enabled:
+                    self.append_log(f"[{idx}] 模拟机械臂移动到点位 {pose_name}")
+                    time.sleep(0.2)
+                else:
+                    self.robot_app.execute_movement(self.robot_app.saved_poses[pose_name], speed)
 
-                if self.stop_event.is_set() or not self.robot_app.connected:
+                if self.stop_event.is_set() or not self.is_robot_ready_for_inspection():
                     self.append_log(f"[{idx}] 点位 {pose_name} 移动后检测到停止请求或连接断开", level="WARN")
                     break
 
@@ -1867,13 +1885,13 @@ class InspectionUIController:
                     break
 
                 while time.time() - stable_start < delay:
-                    if self.stop_event.is_set() or not self.robot_app.connected:
+                    if self.stop_event.is_set() or not self.is_robot_ready_for_inspection():
                         break
                     if not self.wait_if_paused():
                         break
                     time.sleep(0.05)
 
-                if self.stop_event.is_set() or not self.robot_app.connected:
+                if self.stop_event.is_set() or not self.is_robot_ready_for_inspection():
                     self.append_log(f"[{idx}] 点位 {pose_name} 稳定等待中停止", level="WARN")
                     break
 

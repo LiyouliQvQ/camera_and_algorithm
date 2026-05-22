@@ -1,5 +1,28 @@
 # Codex Handoff
 
+## 本次更新：机械臂模拟模式第一版（2026-05-22）
+
+本次完成：
+- 在 `camera/vision_robot_inspection_gui.py` 自动检测页新增“启用机械臂模拟模式”checkbox，默认关闭。
+- 新增 `robot_simulation_enabled_var = tk.BooleanVar(value=False)`。
+- 新增 `InspectionUIController.is_robot_ready_for_inspection()`：
+  - 模拟模式开启时返回 `True`。
+  - 模拟模式关闭时返回 `self.robot_app.connected`。
+- `start_inspection()` 改为使用 `is_robot_ready_for_inspection()` 做机械臂可用性检查；默认关闭时仍必须连接真实机械臂。
+- `_run_inspection_logic()` 在模拟模式开启时不调用 `RobotUIController.execute_movement()`，只记录“模拟机械臂移动到点位 xxx”并 `sleep(0.2)`，随后继续真实相机拍照、算法调用、结果显示、报告保存和可选数据采集归档。
+- 点位存在性检查保持不变：`pose_name` 不在 `saved_poses` 中仍按现有逻辑返回 `ERROR`。
+- 未修改 `RobotUIController.send_cmd()`、`RobotUIController.execute_movement()` 或任何机械臂 socket 通信底层。
+- 未模拟相机；仍要求真实海康相机打开，`capture_for_inspection()` 仍走真实相机。
+- 未训练模型，未调用 PatchCore，未修改 dummy/PatchCore 算法脚本。
+
+适用场景：
+- 无 EC66 机械臂但有真实相机时，验证 GUI 自动检测流程、真实拍照、dummy/配置算法调用、报告保存和数据采集归档。
+
+本次测试：
+- `python -m py_compile camera/vision_robot_inspection_gui.py`：通过
+- `python scripts/smoke_test_dummy.py`：通过
+- `git diff --check`：通过（仅有 LF/CRLF 提示）
+
 ## 本次更新：数据采集模式第一版（2026-05-22）
 
 当前未提交改动包括：
