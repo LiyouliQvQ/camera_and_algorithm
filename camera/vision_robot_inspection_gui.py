@@ -5,6 +5,8 @@ import threading
 import json
 import socket
 import subprocess
+import csv
+import shutil
 from pathlib import Path
 from ctypes import *
 
@@ -1281,6 +1283,10 @@ class InspectionUIController:
 
         self.save_dir = str((THIS_DIR / "inspection_captures").resolve())
         Path(self.save_dir).mkdir(parents=True, exist_ok=True)
+        self.dataset_root = str((THIS_DIR.parent / "CV_Project" / "datasets_collected").resolve())
+        self.collection_enabled_var = tk.BooleanVar(value=False)
+        self.collection_batch_var = tk.StringVar(value=time.strftime("BATCH_%Y%m%d_%H%M%S"))
+        self.collection_type_var = tk.StringVar(value="train/good")
 
         self._build_ui()
 
@@ -1328,6 +1334,34 @@ class InspectionUIController:
         ttk.Button(row1, text="选择图片保存目录", command=self.choose_save_dir).pack(side=tk.LEFT, padx=4)
         self.save_dir_label = ttk.Label(row1, text=self.save_dir, wraplength=560)
         self.save_dir_label.pack(side=tk.LEFT, padx=8)
+
+        collection_group = ttk.LabelFrame(top, text="数据采集模式")
+        collection_group.pack(fill=tk.X, padx=8, pady=(2, 6))
+
+        collection_row1 = ttk.Frame(collection_group)
+        collection_row1.pack(fill=tk.X, padx=8, pady=(8, 4))
+        ttk.Checkbutton(
+            collection_row1,
+            text="启用数据采集模式",
+            variable=self.collection_enabled_var
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(collection_row1, text="batch_id:").pack(side=tk.LEFT)
+        ttk.Entry(collection_row1, textvariable=self.collection_batch_var, width=24).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(collection_row1, text="采集类型:").pack(side=tk.LEFT)
+        self.collection_type_combo = ttk.Combobox(
+            collection_row1,
+            textvariable=self.collection_type_var,
+            values=("train/good", "test/good", "test/defect", "raw/unlabeled"),
+            width=16,
+            state="readonly"
+        )
+        self.collection_type_combo.pack(side=tk.LEFT, padx=(4, 0))
+
+        collection_row2 = ttk.Frame(collection_group)
+        collection_row2.pack(fill=tk.X, padx=8, pady=(0, 8))
+        ttk.Button(collection_row2, text="选择数据集目录", command=self.choose_dataset_root).pack(side=tk.LEFT, padx=(0, 8))
+        self.dataset_root_label = ttk.Label(collection_row2, text=self.dataset_root, wraplength=720)
+        self.dataset_root_label.pack(side=tk.LEFT, padx=4)
 
         row2 = ttk.Frame(top)
         row2.pack(fill=tk.X, padx=8, pady=6)
@@ -1516,6 +1550,123 @@ class InspectionUIController:
         self.root.after(0, lambda m=str(message): self.set_status(m))
         return entry
 
+    @staticmethod
+    def safe_dataset_name(value, fallback="unknown"):
+        text = str(value or "").strip() or fallback
+        safe = "".join(
+            ch if ch.isascii() and (ch.isalnum() or ch in ("-", "_")) else "_"
+            for ch in text
+        )
+        safe = "_".join(part for part in safe.split("_") if part)
+        return safe or fallback
+
+    def parse_collection_type(self, value):
+        parts = str(value or "train/good").split("/", 1)
+        if len(parts) != 2:
+            return "train", "good"
+        split = self.safe_dataset_name(parts[0], "train")
+        label = self.safe_dataset_name(parts[1], "good")
+        if (split, label) not in {
+            ("train", "good"),
+            ("test", "good"),
+            ("test", "defect"),
+            ("raw", "unlabeled"),
+        }:
+            return "train", "good"
+        return split, label
+
+    def ensure_unique_path(self, path):
+        path = Path(path)
+        if not path.exists():
+            return path
+        stem = path.stem
+        suffix = path.suffix
+        for index in range(1, 10000):
+            candidate = path.with_name(f"{stem}_{index:03d}{suffix}")
+            if not candidate.exists():
+                return candidate
+        raise RuntimeError(f"cannot create unique dataset image path: {path}")
+
+    def build_dataset_target_path(self, source_image_path, workpiece_type, product_id, pose_name, split, label, ts):
+        source_path = Path(source_image_path)
+        timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(ts or time.time()))
+        workpiece_safe = self.safe_dataset_name(workpiece_type, "demo_default")
+        product_safe = self.safe_dataset_name(product_id, "part")
+        pose_safe = self.safe_dataset_name(pose_name, "pose")
+        original_safe = self.safe_dataset_name(source_path.stem, "image")
+        suffix = source_path.suffix.lower() or ".png"
+
+        target_dir = Path(self.dataset_root) / workpiece_safe / split / label / pose_safe
+        target_name = f"{timestamp}_{product_safe}_{pose_safe}_{original_safe}{suffix}"
+        return self.ensure_unique_path(target_dir / target_name)
+
+    def append_dataset_manifest(self, row):
+        manifest_path = Path(self.dataset_root) / "manifest.csv"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = [
+            "timestamp",
+            "workpiece_type",
+            "product_id",
+            "pose_name",
+            "split",
+            "label",
+            "batch_id",
+            "source_image_path",
+            "target_image_path",
+        ]
+        write_header = not manifest_path.exists() or manifest_path.stat().st_size == 0
+        with open(manifest_path, "a", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+
+    def archive_dataset_image(self, image_path, product_id, workpiece_type, pose_name, ts):
+        if not self.collection_enabled_var.get():
+            return None
+
+        try:
+            split, label = self.parse_collection_type(self.collection_type_var.get())
+            batch_id = self.safe_dataset_name(
+                self.collection_batch_var.get(),
+                time.strftime("BATCH_%Y%m%d_%H%M%S")
+            )
+            source_path = Path(image_path)
+            if not source_path.exists():
+                raise FileNotFoundError(f"source image does not exist: {source_path}")
+
+            target_path = self.build_dataset_target_path(
+                source_image_path=source_path,
+                workpiece_type=workpiece_type,
+                product_id=product_id,
+                pose_name=pose_name,
+                split=split,
+                label=label,
+                ts=ts,
+            )
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(source_path), str(target_path))
+
+            capture_time = ts or time.time()
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(capture_time))
+            ms = int((capture_time % 1) * 1000)
+            self.append_dataset_manifest({
+                "timestamp": f"{timestamp}.{ms:03d}",
+                "workpiece_type": workpiece_type,
+                "product_id": product_id,
+                "pose_name": pose_name,
+                "split": split,
+                "label": label,
+                "batch_id": batch_id,
+                "source_image_path": str(source_path.resolve()),
+                "target_image_path": str(target_path.resolve()),
+            })
+            self.append_log(f"数据采集归档完成: {target_path.name}")
+            return str(target_path)
+        except Exception as exc:
+            self.append_log(f"数据采集归档失败: {exc}", level="ERROR")
+            return None
+
     def normalize_detection_result(self, result, idx, pose_name, image_path="", product_id="", workpiece_type=""):
         if not isinstance(result, dict):
             result = {
@@ -1610,6 +1761,12 @@ class InspectionUIController:
         if path:
             self.save_dir = path
             self.save_dir_label.config(text=path)
+
+    def choose_dataset_root(self):
+        path = filedialog.askdirectory(initialdir=self.dataset_root)
+        if path:
+            self.dataset_root = path
+            self.dataset_root_label.config(text=path)
 
     def clear_results(self):
         self.all_detection_results.clear()
@@ -1727,6 +1884,13 @@ class InspectionUIController:
                     product_id=product_id,
                     save_dir=self.save_dir,
                     timeout=timeout
+                )
+                self.archive_dataset_image(
+                    image_path=image_path,
+                    product_id=product_id,
+                    workpiece_type=workpiece_type,
+                    pose_name=pose_name,
+                    ts=ts
                 )
 
                 # 4) 调用识别算法

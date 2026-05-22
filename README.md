@@ -282,6 +282,64 @@ camera/inspection_reports/
 
 如需从 dummy 切换到实验 PatchCore，可在本地 `algorithm_config.json` 中把某个工件型号的 `default_profile` 或某个 `pose_profiles` 项改为 `patchcore_default` / `patchcore_cv_lab`，并填写本机真实模型路径与阈值。当前 PatchCore / EfficientAD 仍是实验选项，不默认启用。
 
+## 数据采集模式
+
+自动检测页提供“数据采集模式”，用于在真实相机和真实机械臂流程跑通后，高效采集后续 PatchCore / EfficientAD 训练需要的图片。该模式只做图片归档和 `manifest.csv` 记录，不训练模型、不调用 PatchCore、不需要画框、mask 或人工标注。
+
+使用方式：
+
+1. 在自动检测页选择当前 `workpiece_type`。
+2. 勾选“启用数据采集模式”。
+3. 填写 `batch_id`，用于区分采集批次。
+4. 选择采集类型：`train/good`、`test/good`、`test/defect`、`raw/unlabeled`。
+5. 执行原有自动检测流程。每个点位拍照成功后，GUI 会复制图片到数据集采集目录，并继续原有 dummy 检测流程。
+
+默认采集目录：
+
+```text
+CV_Project/datasets_collected/
+```
+
+目标目录结构：
+
+```text
+CV_Project/datasets_collected/<workpiece_type>/<split>/<label>/<pose_name>/
+```
+
+示例：
+
+```text
+CV_Project/datasets_collected/differential_housing_v1/train/good/P01_front/
+```
+
+文件名格式：
+
+```text
+YYYYMMDD_HHMMSS_productid_pose_originalname.png
+```
+
+`train/good` 是后续无监督异常检测训练的主要数据来源；`test/good` 和 `test/defect` 用于后续模型评估；`raw/unlabeled` 用于临时归档尚未确认用途的图片。
+
+采集 manifest 位于：
+
+```text
+CV_Project/datasets_collected/manifest.csv
+```
+
+字段包括：
+
+- `timestamp`
+- `workpiece_type`
+- `product_id`
+- `pose_name`
+- `split`
+- `label`
+- `batch_id`
+- `source_image_path`
+- `target_image_path`
+
+`CV_Project/datasets_collected/` 已加入 `.gitignore`，采集图片和 manifest 不提交到 GitHub。
+
 ## 如何接入 PatchCore / EfficientAD
 
 建议保持现有 `subprocess + JSON` 集成方式，不直接把 GUI 与深度学习环境强绑定。

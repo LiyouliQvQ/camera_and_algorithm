@@ -1,5 +1,43 @@
 # Codex Handoff
 
+## 本次更新：数据采集模式第一版（2026-05-22）
+
+当前未提交改动包括：
+
+```text
+ M .gitignore
+ M CODEX_HANDOFF.md
+ M README.md
+ M algorithm_config.example.json
+ M camera/vision_robot_inspection_gui.py
+?? HANDOFF_20260521_153625.md
+```
+
+本次完成：
+- 在 `camera/vision_robot_inspection_gui.py` 自动检测页新增“数据采集模式”区域。
+- 控件包括：启用 checkbox、`batch_id` 输入框、采集类型下拉框（`train/good`、`test/good`、`test/defect`、`raw/unlabeled`）、数据集根目录选择。
+- 默认数据集根目录：`CV_Project/datasets_collected`。
+- 自动检测流程中，每个点位拍照成功后，如果启用采集模式，会复制图片到：
+  `CV_Project/datasets_collected/<workpiece_type>/<split>/<label>/<pose_name>/`
+- 文件名格式：`YYYYMMDD_HHMMSS_productid_pose_originalname.png`，并使用 ASCII safe name 规避中文、空格和特殊字符路径风险。
+- 不覆盖已有文件；重名时追加 `_001`、`_002`。
+- 自动追加 `CV_Project/datasets_collected/manifest.csv`，字段为：
+  `timestamp, workpiece_type, product_id, pose_name, split, label, batch_id, source_image_path, target_image_path`。
+- 复制或 manifest 写入失败时只写 GUI 运行日志，不中断原有检测流程。
+- 未训练模型，未调用 PatchCore，未修改 `infer_one_dummy.py` / `infer_one_patchcore.py`。
+- 未修改海康 SDK 底层、机械臂通信底层、`RobotUIController.send_cmd()`、`RobotUIController.execute_movement()`。
+- `.gitignore` 已新增 `CV_Project/datasets_collected/`，采集图片和 manifest 不提交 GitHub。
+- `README.md` 已补充数据采集模式用途、目录结构、manifest 说明和 Git 忽略提醒。
+
+本次测试：
+- `python -m py_compile camera/vision_robot_inspection_gui.py`：通过
+- `python scripts/smoke_test_dummy.py`：通过
+
+下一步建议：
+- 在真实设备现场小批量启用 `train/good` 采集，先验证目录结构、文件名和 manifest 是否符合后续训练习惯。
+- 数据量充足后，再按 `workpiece_type + pose_name` 重新训练/评估 PatchCore 或 EfficientAD。
+- 不要提交 `CV_Project/datasets_collected/`、真实图片、模型权重或运行结果目录。
+
 ## 新对话接力摘要（2026-05-22）
 
 当前未提交状态：

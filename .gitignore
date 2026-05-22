@@ -33,6 +33,7 @@ camera/*.tiff
 # CV datasets / outputs
 # =========================
 CV_Project/datasets/
+CV_Project/datasets_collected/
 CV_Project/results/
 CV_Project/output_results/
 CV_Project/bad_records/
