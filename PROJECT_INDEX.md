@@ -66,13 +66,13 @@ camera_and_algorithm/
 
 - `scripts/infer_one_dummy.py`：稳定 dummy 推理脚本，stdout 输出 GUI 兼容 JSON。
 - `scripts/infer_one_patchcore.py`：PatchCore 单图推理脚本，支持 ckpt、threshold、device，当前仍为实验能力。
-- `scripts/infer_one_fastflow.py`：FastFlow 单图推理脚本，支持 checkpoint、threshold、device、heatmap 输出，当前未默认接 GUI。
+- `scripts/infer_one_fastflow.py`：FastFlow 单图推理脚本，支持 checkpoint、threshold、device、heatmap 输出，已准备纳入仓库，但当前未默认接 GUI。
 - `scripts/check_model_ready.py`：检查模型文件、后缀和 torch/anomalib 环境，不加载模型。
 
 ### 可复现实验
 
-- `scripts/train_fastflow_mvtec_metal_nut.py`：FastFlow + MVTec metal_nut 实验，默认 check-only，只有 `--run-train` 才训练。
-- `scripts/export_fastflow_demo_assets.py`：从已有 FastFlow 结果导出会议演示素材，不训练、不推理。
+- `scripts/train_fastflow_mvtec_metal_nut.py`：FastFlow + MVTec metal_nut 实验，默认 check-only，只有 `--run-train` 才训练；已准备纳入仓库。
+- `scripts/export_fastflow_demo_assets.py`：从已有 FastFlow 结果导出会议演示素材，不训练、不推理；会读取本地 `CV_Project/results/` 和 `CV_Project/datasets/`，只能手动运行，不能放入 CI。
 
 ### 历史/临时实验
 
@@ -120,7 +120,7 @@ camera_and_algorithm/
 
 - dummy：当前默认稳定工程链路验证脚本，不代表真实缺陷检测能力。
 - PatchCore：单图推理脚本已存在，但真实缺陷模型仍不稳定，不应默认接入 GUI 生产流程。
-- FastFlow：已有 MVTec metal_nut 复现实验、单图推理脚本和演示素材导出工具；当前仍是实验能力。
+- FastFlow：已有 MVTec metal_nut 复现实验、单图推理脚本和演示素材导出工具，5 个相关实验文件已准备纳入仓库；当前仍是实验能力，不默认接 GUI，不进入 GitHub Actions。训练、推理、素材导出都需要手动运行。
 - EfficientAD：已有早期训练脚本和对比实验脚本，但未接入 GUI 默认检测链路。
 
 当前训练优先级应先补充真实 OK 数据，尤其是每个 `workpiece_type + pose_name` 的 `train/good`。
@@ -135,7 +135,7 @@ python -m py_compile CV_Project/scripts/infer_one_dummy.py
 python scripts/smoke_test_dummy.py
 ```
 
-CI 不连接相机、不连接机械臂、不运行 PatchCore/FastFlow/EfficientAD、不训练模型。
+CI 不连接相机、不连接机械臂、不运行 PatchCore/FastFlow/EfficientAD、不训练模型。`export_fastflow_demo_assets.py` 依赖本地 `results/` 和 `datasets/`，不能加入 CI。
 
 ## 11. 常用测试命令
 
@@ -151,6 +151,14 @@ FastFlow 环境检查，不训练：
 
 ```powershell
 D:\project_environment\envs\cv_lab\python.exe CV_Project\scripts\train_fastflow_mvtec_metal_nut.py --check-only
+```
+
+FastFlow 脚本语法检查，不训练、不推理、不导出：
+
+```powershell
+python -m py_compile CV_Project\scripts\infer_one_fastflow.py
+python -m py_compile CV_Project\scripts\train_fastflow_mvtec_metal_nut.py
+python -m py_compile CV_Project\scripts\export_fastflow_demo_assets.py
 ```
 
 GPU 环境检查：

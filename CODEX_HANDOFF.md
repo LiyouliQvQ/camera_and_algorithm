@@ -1,5 +1,31 @@
 # Codex Handoff
 
+## 本次更新：FastFlow 实验文件提交前整理（2026-05-29）
+
+本次完成：
+- FastFlow 5 个实验相关文件已准备纳入仓库：
+  - `CV_Project/scripts/README_fastflow_infer.md`
+  - `CV_Project/scripts/README_fastflow_mvtec.md`
+  - `CV_Project/scripts/export_fastflow_demo_assets.py`
+  - `CV_Project/scripts/infer_one_fastflow.py`
+  - `CV_Project/scripts/train_fastflow_mvtec_metal_nut.py`
+- 修复 `train_fastflow_mvtec_metal_nut.py` 顶部 docstring 的 Windows 路径 `SyntaxWarning: invalid escape sequence`，仅改为 raw docstring，未修改训练逻辑或默认参数。
+- 更新 `PROJECT_INDEX.md`：记录 FastFlow 实验文件准备入库、当前不默认接 GUI、不进入 GitHub Actions、训练/推理/素材导出都需手动运行。
+- 明确 `export_fastflow_demo_assets.py` 会读取本地 `CV_Project/results/` 和 `CV_Project/datasets/`，不能放入 CI。
+
+本次验证：
+- `python -m py_compile CV_Project\scripts\infer_one_fastflow.py`：通过
+- `python -m py_compile CV_Project\scripts\train_fastflow_mvtec_metal_nut.py`：通过，SyntaxWarning 已修复
+- `python -m py_compile CV_Project\scripts\export_fastflow_demo_assets.py`：通过
+- `git diff --check`：通过
+
+本次限制：
+- 未运行训练。
+- 未运行推理。
+- 未运行 `export_fastflow_demo_assets.py`。
+- 未读取数据集、结果目录、输出目录、模型权重或图片文件。
+- 未修改 GUI、相机或机械臂代码。
+
 ## 本次更新：新增项目索引文档（2026-05-29）
 
 本次完成：
