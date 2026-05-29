@@ -1052,8 +1052,62 @@ class DefectDetector:
                     merged[key] = value
         return merged
 
-    def resolve_algorithm_profile(self, workpiece_type="", pose_name=""):
+    def get_profile_name_from_value(self, value):
+        """Return a profile name from a string or default_profile dict."""
+        if isinstance(value, dict):
+            return str(value.get("profile") or "")
+        return str(value or "")
+
+    def resolve_profile_override(self, requested_profile, workpiece_type="", pose_name=""):
+        """Resolve a user-selected algorithm profile without changing auto mode."""
+        requested_profile = str(requested_profile or "").strip()
+        workpiece_type = str(workpiece_type or "").strip()
+        pose_name = str(pose_name or "").strip()
+        if not requested_profile:
+            raise ValueError("算法模式未指定profile")
+
+        if requested_profile == "dummy":
+            profiles = self.config.get("profiles", {}) if isinstance(self.config, dict) else {}
+            profile = profiles.get("dummy")
+            if isinstance(profile, dict):
+                return "dummy", dict(profile), "algorithm_mode"
+            return "dummy", self.get_dummy_profile(), "algorithm_mode"
+
+        workpieces = self.config.get("workpiece_models", {}) if isinstance(self.config, dict) else {}
+        if isinstance(workpieces, dict) and workpiece_type in workpieces:
+            workpiece = workpieces[workpiece_type]
+            if isinstance(workpiece, dict):
+                pose_profiles = workpiece.get("pose_profiles", {})
+                if isinstance(pose_profiles, dict) and pose_name in pose_profiles:
+                    pose_config = pose_profiles[pose_name]
+                    if isinstance(pose_config, dict):
+                        default_profile = workpiece.get("default_profile")
+                        effective_profile = self.get_profile_name_from_value(
+                            pose_config.get("profile") or default_profile
+                        )
+                        if effective_profile == requested_profile:
+                            return requested_profile, self.merge_profile(requested_profile, pose_config), "algorithm_mode_pose"
+
+                default_profile = workpiece.get("default_profile")
+                if self.get_profile_name_from_value(default_profile) == requested_profile:
+                    overrides = default_profile if isinstance(default_profile, dict) else None
+                    return requested_profile, self.merge_profile(requested_profile, overrides), "algorithm_mode_workpiece_default"
+
+        profiles = self.config.get("profiles", {}) if isinstance(self.config, dict) else {}
+        if requested_profile in profiles and isinstance(profiles[requested_profile], dict):
+            return requested_profile, dict(profiles[requested_profile]), "algorithm_mode_profile"
+        raise ValueError(f"指定算法profile不存在：{requested_profile}")
+
+    def resolve_algorithm_profile(self, workpiece_type="", pose_name="", algorithm_mode="auto"):
         """Resolve profile by workpiece type and pose, then fall back safely."""
+        algorithm_mode = str(algorithm_mode or "auto").strip()
+        if algorithm_mode and algorithm_mode != "auto":
+            return self.resolve_profile_override(
+                requested_profile=algorithm_mode,
+                workpiece_type=workpiece_type,
+                pose_name=pose_name,
+            )
+
         workpiece_type = str(workpiece_type or "").strip()
         pose_name = str(pose_name or "").strip()
         workpieces = self.config.get("workpiece_models", {}) if isinstance(self.config, dict) else {}
@@ -1118,7 +1172,9 @@ class DefectDetector:
             "--product-id", str(product_id or ""),
         ])
 
-        if profile.get("model"):
+        if profile.get("checkpoint"):
+            cmd.extend(["--checkpoint", str(self.resolve_project_path(profile["checkpoint"]))])
+        elif profile.get("model"):
             cmd.extend(["--model", str(self.resolve_project_path(profile["model"]))])
         if profile.get("threshold") is not None:
             cmd.extend(["--threshold", str(profile["threshold"])])
@@ -1126,7 +1182,7 @@ class DefectDetector:
         timeout = int(profile.get("timeout", 5))
         return cmd, script, timeout
 
-    def detect(self, frame_rgb, frame_gray=None, image_path=None, pose_name="", product_id="", workpiece_type=""):
+    def detect(self, frame_rgb, frame_gray=None, image_path=None, pose_name="", product_id="", workpiece_type="", algorithm_mode="auto", algorithm_profile_override=""):
         """
         自动检测主入口。
         你后续只需要改这个函数内部的 TODO 区域即可。
@@ -1135,6 +1191,7 @@ class DefectDetector:
         script_path = ""
         profile_name = ""
         profile_source = ""
+        requested_algorithm_mode = str(algorithm_profile_override or algorithm_mode or "auto").strip()
 
         def error_result(message):
             return {
@@ -1149,6 +1206,7 @@ class DefectDetector:
                 "pose": pose_name or "",
                 "product_id": product_id or "",
                 "workpiece_type": workpiece_type or "",
+                "algorithm_mode": requested_algorithm_mode or "auto",
                 "algorithm_script": script_path,
                 "algorithm_profile": profile_name,
                 "algorithm_profile_source": profile_source,
@@ -1163,6 +1221,7 @@ class DefectDetector:
             profile_name, profile, profile_source = self.resolve_algorithm_profile(
                 workpiece_type=workpiece_type,
                 pose_name=pose_name,
+                algorithm_mode=requested_algorithm_mode or "auto",
             )
             cmd, infer_script, timeout = self.build_algorithm_command(
                 profile=profile,
@@ -1213,6 +1272,7 @@ class DefectDetector:
         result.setdefault("pose", pose_name or "")
         result.setdefault("product_id", product_id or "")
         result.setdefault("workpiece_type", workpiece_type or "")
+        result.setdefault("algorithm_mode", requested_algorithm_mode or "auto")
         result.setdefault("algorithm_script", script_path)
         result.setdefault("algorithm_profile", profile_name)
         result.setdefault("algorithm_profile_source", profile_source)
@@ -1265,6 +1325,14 @@ class InspectionUIController:
         self.detector = DefectDetector()
         self.workpiece_display_map = self.detector.get_workpiece_display_map()
         self.workpiece_type_var = tk.StringVar()
+        self.algorithm_mode_display_map = {
+            "自动配置": "auto",
+            "Dummy": "dummy",
+            "PatchCore": "patchcore_default",
+            "EfficientAD": "efficientad_default",
+            "FastFlow": "fastflow_default",
+        }
+        self.algorithm_mode_var = tk.StringVar(value="自动配置")
 
         self.is_running = False
         self.stop_event = threading.Event()
@@ -1303,6 +1371,11 @@ class InspectionUIController:
         display = self.workpiece_type_var.get()
         return self.workpiece_display_map.get(display, display or "demo_default")
 
+    def get_selected_algorithm_mode(self):
+        """Return the selected algorithm mode profile key."""
+        display = self.algorithm_mode_var.get()
+        return self.algorithm_mode_display_map.get(display, "auto")
+
     def is_robot_ready_for_inspection(self):
         """Return True when inspection may proceed with real or simulated robot motion."""
         return self.robot_simulation_enabled_var.get() or self.robot_app.connected
@@ -1330,6 +1403,15 @@ class InspectionUIController:
         active_workpiece = self.detector.get_active_workpiece_type()
         self.workpiece_type_var.set(self.get_workpiece_display_for_key(active_workpiece))
         self.workpiece_type_combo.pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(row1, text="算法模式:").pack(side=tk.LEFT)
+        self.algorithm_mode_combo = ttk.Combobox(
+            row1,
+            textvariable=self.algorithm_mode_var,
+            values=list(self.algorithm_mode_display_map.keys()),
+            width=14,
+            state="readonly"
+        )
+        self.algorithm_mode_combo.pack(side=tk.LEFT, padx=(4, 12))
         ttk.Label(row1, text="扫码枪预留: 键盘输入后回车").pack(side=tk.LEFT, padx=(0, 12))
 
         ttk.Label(row1, text="采图超时(s):").pack(side=tk.LEFT)
@@ -1717,6 +1799,7 @@ class InspectionUIController:
             "heatmap_path": result.get("heatmap_path", ""),
             "product_id": product_id or result.get("product_id", ""),
             "workpiece_type": workpiece_type or result.get("workpiece_type", ""),
+            "algorithm_mode": result.get("algorithm_mode", ""),
             "algorithm_script": result.get("algorithm_script", ""),
             "algorithm_profile": result.get("algorithm_profile", ""),
             "algorithm_profile_source": result.get("algorithm_profile_source", ""),
@@ -1751,7 +1834,9 @@ class InspectionUIController:
             "ng_count": stats["ng_count"],
             "error_count": stats["error_count"],
             "yield_rate": stats["yield_rate"],
+            "algorithm_mode": self.results[0].get("algorithm_mode", "") if self.results else "",
             "algorithm_script": self.results[0].get("algorithm_script", "") if self.results else "",
+            "algorithm_profile": self.results[0].get("algorithm_profile", "") if self.results else "",
             "results": self.results,
             "logs": self.run_logs
         }
@@ -1832,6 +1917,7 @@ class InspectionUIController:
     def _run_inspection_logic(self):
         product_id = self.product_id_var.get().strip() or self.generate_product_id()
         workpiece_type = self.get_selected_workpiece_type()
+        algorithm_mode = self.get_selected_algorithm_mode()
         timeout = float(self.capture_timeout_var.get() or 3.0)
         robot_simulation_enabled = self.robot_simulation_enabled_var.get()
         start_time = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1840,7 +1926,7 @@ class InspectionUIController:
         had_runtime_error = False
 
         try:
-            self.append_log(f"开始检测: product_id={product_id}, workpiece_type={workpiece_type}")
+            self.append_log(f"开始检测: product_id={product_id}, workpiece_type={workpiece_type}, algorithm_mode={algorithm_mode}")
             for idx, step in enumerate(list(self.robot_app.sequence_list), start=1):
                 if self.stop_event.is_set() or not self.is_robot_ready_for_inspection():
                     self.append_log("检测流程被停止或机械臂连接断开", level="WARN")
@@ -1922,7 +2008,8 @@ class InspectionUIController:
                     image_path=image_path,
                     pose_name=pose_name,
                     product_id=product_id,
-                    workpiece_type=workpiece_type
+                    workpiece_type=workpiece_type,
+                    algorithm_mode=algorithm_mode
                 )
 
                 normalized = self.normalize_detection_result(result, idx, pose_name, image_path, product_id, workpiece_type)

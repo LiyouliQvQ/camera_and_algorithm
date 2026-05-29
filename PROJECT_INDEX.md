@@ -9,6 +9,7 @@
 ```text
 GUI 自动检测页
   -> 读取工件型号、检测序列、算法配置
+  -> 读取算法模式：自动配置 / Dummy / PatchCore / EfficientAD / FastFlow
   -> EC66 机械臂移动到 pose
   -> 海康相机软件触发拍照
   -> 保存检测图片
@@ -57,7 +58,7 @@ camera_and_algorithm/
 - `CameraUIController`：相机 GUI 面板，负责设备选择、预览、曝光/增益、触发、保存图片，以及自动检测拍照入口 `capture_for_inspection()`。
 - `RobotUIController`：EC66 连接、点位示教、检测序列管理和真实运动执行。不要轻易修改 `send_cmd()` 和 `execute_movement()`。
 - `DefectDetector`：算法调用统一入口，读取 algorithm config，解析 profile，并通过 subprocess 调用算法脚本。
-- `InspectionUIController`：自动检测主流程、结果表格、数据采集模式、机械臂模拟模式和检测报告保存。
+- `InspectionUIController`：自动检测主流程、算法模式选择、结果表格、数据采集模式、机械臂模拟模式和检测报告保存。
 - `AlarmLightController`：当前为报警灯状态日志/占位控制。
 
 ## 6. CV_Project/ 关键脚本与职责
@@ -107,12 +108,20 @@ camera_and_algorithm/
 
 ## 8. 工件型号 + 位姿 + 模型权重选择逻辑
 
-算法选择回退顺序：
+`自动配置` 模式的算法选择回退顺序：
 
 1. 若 `workpiece_models[workpiece_type].pose_profiles[pose_name]` 存在，则使用该位姿专用配置。
 2. 否则使用 `workpiece_models[workpiece_type].default_profile`。
 3. 否则使用全局 `active_profile`。
 4. 若配置异常或脚本缺失，GUI 返回 ERROR；若配置文件完全不可用，则回退内置 dummy。
+
+GUI 自动检测页还提供算法模式下拉框：
+
+- `自动配置` -> `auto`：保持上面的原有配置选择逻辑。
+- `Dummy` -> `dummy`：强制使用 dummy profile，是最安全的工程链路验证模式。
+- `PatchCore` -> `patchcore_default`：优先使用当前工件型号 + 位姿下 profile 为 `patchcore_default` 的配置；找不到时回退 `profiles.patchcore_default`。
+- `EfficientAD` -> `efficientad_default`：按同样规则预留；当前不默认启用，脚本缺失或配置不完整时返回 ERROR。
+- `FastFlow` -> `fastflow_default`：按同样规则预留；当前不默认接 GUI，真实运行需要本地 checkpoint 和配置。
 
 推荐后续训练和部署按 `workpiece_type + pose_name` 独立管理模型，因为每个检测位姿的外观分布可能不同。
 
@@ -120,7 +129,7 @@ camera_and_algorithm/
 
 - dummy：当前默认稳定工程链路验证脚本，不代表真实缺陷检测能力。
 - PatchCore：单图推理脚本已存在，但真实缺陷模型仍不稳定，不应默认接入 GUI 生产流程。
-- FastFlow：已有 MVTec metal_nut 复现实验、单图推理脚本和演示素材导出工具，5 个相关实验文件已准备纳入仓库；当前仍是实验能力，不默认接 GUI，不进入 GitHub Actions。训练、推理、素材导出都需要手动运行。
+- FastFlow：已有 MVTec metal_nut 复现实验、单图推理脚本和演示素材导出工具，5 个相关实验文件已准备纳入仓库；GUI 已预留 `FastFlow` 算法模式，但默认不启用真实模型，不进入 GitHub Actions。训练、推理、素材导出都需要手动运行。
 - EfficientAD：已有早期训练脚本和对比实验脚本，但未接入 GUI 默认检测链路。
 
 当前训练优先级应先补充真实 OK 数据，尤其是每个 `workpiece_type + pose_name` 的 `train/good`。

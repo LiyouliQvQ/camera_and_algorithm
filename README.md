@@ -180,6 +180,18 @@ Copy-Item algorithm_config.example.json algorithm_config.json
 
 PatchCore 当前仍是实验版，不建议作为正式检测算法接入现场流程。回退到 dummy 时，把 `active_profile` 改回 `dummy` 即可。
 
+## GUI 算法模式
+
+自动检测页面在“工件型号”附近提供“算法模式”下拉框：
+
+- `自动配置`：默认安全选项，保持原有 `workpiece_type + pose_name` 配置选择逻辑。
+- `Dummy`：强制使用 `dummy` profile，适合工程链路验证。
+- `PatchCore`：优先使用当前工件型号与点位下的 PatchCore 配置，找不到时回退 `patchcore_default`。
+- `EfficientAD`：预留实验选项，回退 `efficientad_default`；当前不默认启用，脚本不存在或配置不完整时 GUI 返回 ERROR。
+- `FastFlow`：预留实验选项，回退 `fastflow_default`；当前不默认启用，训练、推理和素材导出都需要手动运行。
+
+默认 `active_profile`、`demo_default.default_profile` 仍保持 `dummy`，不会误调用真实模型。选择真实算法模式只改变配置解析，不会训练模型，也不会把 PyTorch/anomalib 直接导入 GUI 主进程。
+
 ## JSON 输出协议
 
 OK 示例：

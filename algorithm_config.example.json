@@ -23,6 +23,22 @@
       "model": "D:/run_code/camera_and_algorithm/CV_Project/results/Patchcore/differential_housing/v5/weights/lightning/model.ckpt",
       "threshold": 0.5,
       "timeout": 30
+    },
+    "efficientad_default": {
+      "mode": "conda",
+      "conda_env": "cv_lab",
+      "script": "CV_Project/scripts/infer_one_efficientad.py",
+      "model": "D:/run_code/camera_and_algorithm/CV_Project/results/EfficientAd/differential_housing/default/weights/lightning/model.ckpt",
+      "threshold": 0.5,
+      "timeout": 30
+    },
+    "fastflow_default": {
+      "mode": "conda",
+      "conda_env": "cv_lab",
+      "script": "CV_Project/scripts/infer_one_fastflow.py",
+      "checkpoint": "D:/run_code/camera_and_algorithm/CV_Project/results/fastflow_differential_housing/default/weights/lightning/model.ckpt",
+      "threshold": 0.5,
+      "timeout": 30
     }
   },
   "workpiece_models": {

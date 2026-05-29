@@ -1,5 +1,31 @@
 # Codex Handoff
 
+## 本次更新：GUI 算法模式下拉框第一版（2026-05-29）
+
+本次完成：
+- 在 `camera/vision_robot_inspection_gui.py` 自动检测页面的“工件型号”附近新增“算法模式”下拉框。
+- 下拉选项与内部 profile 映射：
+  - `自动配置` -> `auto`
+  - `Dummy` -> `dummy`
+  - `PatchCore` -> `patchcore_default`
+  - `EfficientAD` -> `efficientad_default`
+  - `FastFlow` -> `fastflow_default`
+- `auto` 保持原有 `workpiece_type + pose_name` 配置解析逻辑。
+- `dummy` 强制使用 dummy profile，作为安全工程链路验证模式。
+- `patchcore_default` / `efficientad_default` / `fastflow_default` 会优先匹配当前工件型号 + 点位下同 profile 配置，找不到再回退对应全局 profile；profile 或脚本缺失时返回 `label="ERROR"`，GUI 不崩溃。
+- 检测结果和 JSON 报告中补充 `algorithm_mode`，并保留 `algorithm_profile` / `algorithm_profile_source`。
+- `algorithm_config.example.json` 补充 `efficientad_default` 和 `fastflow_default` 示例 profile；`active_profile`、`active_workpiece_type` 和 `demo_default.default_profile` 仍保持 dummy 安全默认。
+- FastFlow 示例使用 `CV_Project/scripts/infer_one_fastflow.py`、`mode=conda`、`conda_env=cv_lab`，并预留 `checkpoint` 字段。
+- EfficientAD 示例使用预留脚本 `CV_Project/scripts/infer_one_efficientad.py`；脚本当前可以不存在，选择后应返回 ERROR 而不是崩溃。
+- 更新 `README.md` 和 `PROJECT_INDEX.md`，记录 GUI 算法模式选择，但默认仍不启用真实模型。
+
+本次限制：
+- 未运行 PatchCore / FastFlow / EfficientAD。
+- 未训练模型。
+- 未连接相机或机械臂。
+- 未读取数据集、结果目录、输出目录、模型权重或图片文件。
+- 未修改海康 SDK、机械臂通信底层、算法脚本、workflow 或 requirements。
+
 ## 本次更新：FastFlow 实验文件提交前整理（2026-05-29）
 
 本次完成：
