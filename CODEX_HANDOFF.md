@@ -1,5 +1,184 @@
 # Codex Handoff
 
+## 本次更新：新增项目索引文档（2026-05-29）
+
+本次完成：
+- 新增 `PROJECT_INDEX.md`，作为新 Codex 对话和人工接力的项目地图。
+- 索引内容包括：项目目标、当前主流程、顶层目录地图、核心文件地图、`camera/` 关键类、`CV_Project/` 关键脚本、`algorithm_config` 配置结构、工件型号 + 位姿 + 模型选择逻辑、dummy/PatchCore/FastFlow/EfficientAD 当前状态、GitHub Actions、常用测试命令、优先阅读文件、禁读目录和后续推荐任务。
+- `README.md` 新增“文档导航”小节，指向 `PROJECT_INDEX.md`、`CODEX_HANDOFF.md`、`PROJECT_OVERVIEW.md` 和 `algorithm_config.example.json`。
+
+本次限制：
+- 未修改任何 Python 代码。
+- 未修改 `algorithm_config.example.json`。
+- 未修改 workflow。
+- 未读取或修改数据集、结果、模型权重、SDK、采集图片或 anomalib 大目录。
+
+建议：
+- 后续新对话先读取 `AGENTS.md`、`PROJECT_INDEX.md`、`CODEX_HANDOFF.md`，再按任务需要读取具体代码文件。
+
+## 本次更新：Fastflow 30 epoch 组会展示素材导出（2026-05-26）
+
+本次完成：
+- 新增 `CV_Project/scripts/export_fastflow_demo_assets.py`。
+- 基于 FastFlow 30 epoch `pre_trained=True` 结果整理组会 PPT 素材。
+- 未使用 1 epoch 指标，未重新训练，未推理。
+- 输出目录：`CV_Project/output_results/fastflow_demo_metal_nut`。
+- 生成文件：
+  - `metrics_summary.md`
+  - `metrics_summary.json`
+  - `selected_cases.csv`
+  - `selected_cases.md`
+  - `visualizations/<class>/...png`
+- 选择样本：
+  - `bent`: `000.png`, `001.png`, `002.png`
+  - `color`: `000.png`, `001.png`, `002.png`
+  - `flip`: `000.png`, `001.png`, `002.png`
+  - `scratch`: `000.png`, `001.png`, `002.png`
+  - `good`: `000.png`, `001.png`
+- 缺陷类均记录到对应 GT mask 路径；`good` 类无 GT mask。
+- 说明：当前导出使用 Anomalib 已生成 visualization 图，不伪造原图/热力图/overlay 拆分。
+
+测试命令：
+```powershell
+D:\project_environment\envs\cv_lab\python.exe -m py_compile CV_Project\scripts\export_fastflow_demo_assets.py
+D:\project_environment\envs\cv_lab\python.exe CV_Project\scripts\export_fastflow_demo_assets.py
+```
+
+注意：
+- `CV_Project/output_results/` 已被 `.gitignore` 忽略，不要提交导出的图片和素材。
+- 不要提交 `datasets/`、`results/`、模型权重、GT mask、热力图或 prediction 图片。
+
+## 本次更新：Fastflow 单图推理脚本第一版（2026-05-25）
+
+本次完成：
+- 新增 `CV_Project/scripts/infer_one_fastflow.py`。
+  - 支持 `--image`、`--checkpoint`、`--threshold`、`--pose`、`--product-id`、`--output-dir`、`--device`。
+  - stdout 只输出 GUI 兼容 JSON。
+  - stderr 输出 Fastflow / Anomalib 调试日志。
+  - 图片不存在、checkpoint 不存在、模型加载失败或预测失败时返回 `label="ERROR"`，不让进程崩溃。
+  - 推理时使用 `Fastflow(backbone="resnet18", pre_trained=False)`，避免联网下载 timm/Hugging Face 权重。
+  - 若预测结果含 `anomaly_map`，会尝试保存灰度 heatmap 到 `--output-dir` 并返回 `heatmap_path`；失败则返回空字符串。
+- 新增 `CV_Project/scripts/README_fastflow_infer.md`，记录命令、JSON 协议和注意事项。
+
+本次限制：
+- 未修改 `camera/`。
+- 未修改 `CV_Project/anomalib/`、`CV_Project/datasets/`、`CV_Project/results/`、`CV_Project/pre_trained/` 或 `MvImport/`。
+- 未训练，未批量推理，未提交，未推送。
+
+下一步建议：
+- 先用一张明确允许读取的测试图和 `v2/weights/lightning/model.ckpt` 做单图烟测。
+- 验证 stdout JSON、stderr 日志、score 提取和 heatmap_path 后，再考虑写入本地 `algorithm_config.json` 的 Fastflow profile。
+
+## 本次更新：Fastflow 1 epoch 流程验证通过（2026-05-25）
+
+本次完成：
+- FastFlow + MVTec AD `metal_nut` 已成功完成 `fit`、`test`、`predict`。
+- 当前运行环境：
+  - `torch 2.5.1+cu121`
+  - `anomalib 2.3.0dev`
+  - CUDA 可用
+  - GPU: `NVIDIA GeForce RTX 3060 Ti`
+- Windows PowerShell 成功运行前需要设置 UTF-8 环境变量：
+```powershell
+$env:PYTHONUTF8="1"
+$env:PYTHONIOENCODING="utf-8"
+$env:PYTHONLEGACYWINDOWSSTDIO="0"
+```
+- 成功运行命令：
+```powershell
+D:\project_environment\envs\cv_lab\python.exe CV_Project\scripts\train_fastflow_mvtec_metal_nut.py --run-train --max-epochs 1 --batch-size 4 --image-size 256 --pre-trained false
+```
+- 当前指标：
+```text
+image_AUROC: 0.5171065330505371
+image_F1Score: 0.8888888955116272
+pixel_AUROC: 0.7789766192436218
+pixel_F1Score: 0.3588261902332306
+```
+- 说明：这些指标只是 `max_epochs=1` 且 `pre_trained=False` 的流程验证结果，不代表最终检测效果。
+- 输出目录：`CV_Project/results/fastflow_mvtec_metal_nut`。
+- 已确认 `CV_Project/results/` 被 `.gitignore` 忽略；不要提交 `results/`、`datasets/`、模型权重、热力图图片或预测图片。
+
+下一步建议：
+- 编写 `CV_Project/scripts/infer_one_fastflow.py`，封装单图推理，并输出与 GUI 兼容的 JSON。
+- 继续保持 `subprocess + JSON` 边界，不把 PyTorch/anomalib 直接 import 到 Tkinter GUI 主进程。
+
+## 本次更新：Fastflow 离线预训练开关（2026-05-25）
+
+本次完成：
+- 修改 `CV_Project/scripts/train_fastflow_mvtec_metal_nut.py`，新增 `--pre-trained` 参数。
+- `--pre-trained` 默认值为 `False`，默认离线运行，不触发 `timm` / Hugging Face 权重下载。
+- 布尔解析支持 `true/false`、`1/0`、`yes/no`、`y/n`，避免字符串 `"false"` 被当作 True。
+- Fastflow 初始化改为 `Fastflow(backbone="resnet18", pre_trained=args.pre_trained)`。
+- 脚本启动时会打印 `pre_trained=False/True`。
+- 更新 `CV_Project/scripts/README_fastflow_mvtec.md`，说明离线模式只验证流程，1 epoch 指标不代表真实性能。
+
+FastFlow 1 epoch 首次尝试记录：
+- 失败原因：`pre_trained=True` 时，`timm` 尝试联网从 Hugging Face 下载 `resnet18.a1_in1k` 预训练权重，当前环境网络/权限不允许，报 `WinError 10013`。
+- 当前解决方案：默认 `pre_trained=False`，先离线跑通 Fastflow fit/test/predict 流程。
+- 后续如果追求效果，再处理 `timm` 预训练权重本地缓存或联网下载问题。
+
+本次测试：
+```powershell
+D:\project_environment\envs\cv_lab\python.exe -m py_compile CV_Project\scripts\train_fastflow_mvtec_metal_nut.py
+D:\project_environment\envs\cv_lab\python.exe CV_Project\scripts\train_fastflow_mvtec_metal_nut.py --check-only
+```
+
+未做事项：
+- 未训练。
+- 未下载数据或权重。
+- 未修改 `camera/`。
+- 未提交、未推送。
+
+## 本次更新：Fastflow + MVTec AD metal_nut 最小实验脚本准备（2026-05-25）
+
+本次完成：
+- 新增 `CV_Project/scripts/train_fastflow_mvtec_metal_nut.py`。
+  - 默认只做 check-only，不训练、不下载数据。
+  - 使用已确认 API：`MVTecAD`、`Fastflow`、`Engine`。
+  - 类名使用 `Fastflow`，不是 `FastFlow`。
+  - 默认类别为 `metal_nut`，不是 `hazelnut`。
+  - 默认数据根目录：`D:\run_code\camera_and_algorithm\CV_Project\datasets\MVTec`。
+  - 默认输出目录：`D:\run_code\camera_and_algorithm\CV_Project\results\fastflow_mvtec_metal_nut`。
+  - 只有显式传入 `--run-train` 才会执行训练、测试、预测。
+- 新增 `CV_Project/scripts/README_fastflow_mvtec.md`。
+  - 记录 `metal_nut` 选择原因、数据放置位置、check-only 命令、1 epoch 小测试命令、输出目录和后续迁移到差速器壳体自采数据的建议。
+- 未修改 `camera/`、`CV_Project/anomalib/`、`CV_Project/datasets/`、`CV_Project/pre_trained/`、`CV_Project/results/`、`CV_Project/output_results/`、`CV_Project/bad_records/`。
+- 未读取图片、模型权重或训练输出大文件。
+
+当前可运行流程：
+```powershell
+D:\project_environment\envs\cv_lab\python.exe CV_Project\scripts\train_fastflow_mvtec_metal_nut.py --check-only
+```
+
+1 epoch 小测试命令（仅在 MVTec AD metal_nut 数据集已放好后手动执行）：
+```powershell
+D:\project_environment\envs\cv_lab\python.exe CV_Project\scripts\train_fastflow_mvtec_metal_nut.py --run-train --max-epochs 1 --batch-size 4 --image-size 256
+```
+
+测试命令和结果：
+```powershell
+D:\project_environment\envs\cv_lab\python.exe -m py_compile CV_Project\scripts\train_fastflow_mvtec_metal_nut.py
+```
+- 结果：通过。
+
+仍未完成：
+- 未下载 MVTec AD 数据集。
+- 未训练 Fastflow。
+- 未生成模型、可视化图片或预测结果。
+- 未接入 GUI。
+
+下一步建议：
+- 将 MVTec AD `metal_nut` 放到 `CV_Project\datasets\MVTec\metal_nut`。
+- 先运行 check-only，确认 `train/good`、`test`、`ground_truth` 都存在。
+- 再手动运行 1 epoch 小测试，观察 `CV_Project\results\fastflow_mvtec_metal_nut` 输出。
+- 验证官方 API 链路后，再单独设计差速器壳体自采数据的 Fastflow/Folder 实验入口。
+
+新 Codex 对话启动提示词：
+```text
+请继续 D:\run_code\camera_and_algorithm 项目。Fastflow + MVTec AD metal_nut 最小实验脚本已新增：CV_Project/scripts/train_fastflow_mvtec_metal_nut.py，说明文档为 CV_Project/scripts/README_fastflow_mvtec.md。后续 Fastflow/Anomalib 命令不要使用 conda run，请直接使用 D:\project_environment\envs\cv_lab\python.exe。不要读取或修改 camera/MvImport、captures、inspection_captures、CV_Project/MvImport、CV_Project/anomalib、datasets、pre_trained、results、output_results、bad_records、图片文件或模型权重，除非用户明确允许。
+```
+
 ## 本次更新：机械臂模拟模式第一版（2026-05-22）
 
 本次完成：
